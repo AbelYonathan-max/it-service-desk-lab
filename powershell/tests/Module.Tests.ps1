@@ -26,6 +26,34 @@ Describe 'ServiceDeskLab module' {
         }
     }
 
+    It 'calls private module functions from the lab scripts only inside the module' {
+        # Import-Module exposes only the public functions; a lab script that needs a private one runs
+        # it in the module's scope: & (Get-Module ServiceDeskLab) { ... } or & $module { ... }.
+        $private = foreach ($file in Get-ChildItem (Join-Path $moduleRoot 'Private') -Filter '*.ps1') {
+            $ast = [Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$null)
+            $ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $false).Name
+        }
+        $private | Should -Contain 'Initialize-LabHomeFolder'
+        foreach ($script in Get-ChildItem -Path (Join-Path $repoRoot 'lab') -Recurse -Filter '*.ps1') {
+            $ast = [Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$null, [ref]$null)
+            $calls = $ast.FindAll({
+                    param($node)
+                    $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -in $private
+                }, $true)
+            foreach ($call in $calls) {
+                $inModule = $false
+                for ($parent = $call.Parent; $parent; $parent = $parent.Parent) {
+                    if ($parent -is [Management.Automation.Language.CommandAst] -and $parent.InvocationOperator -eq 'Ampersand' -and
+                        $parent.CommandElements[0].Extent.Text -match 'Get-Module ServiceDeskLab|^\$module$') {
+                        $inModule = $true
+                        break
+                    }
+                }
+                $inModule | Should -BeTrue -Because "$($script.Name) line $($call.Extent.StartLineNumber) calls the private $($call.GetCommandName())"
+            }
+        }
+    }
+
     It 'has no syntax errors in any PowerShell file' {
         $files = Get-ChildItem -Path $repoRoot -Recurse -Include '*.ps1', '*.psm1', '*.psd1' | Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' }
         foreach ($file in $files) {

@@ -66,8 +66,10 @@ if (-not (Get-SmbShare -Name $config.FileServer.homeShareName -ErrorAction Silen
         -FolderEnumerationMode AccessBased -CachingMode None | Out-Null
 }
 $made = 0
+$module = Get-Module ServiceDeskLab
 Get-ADUser -SearchBase $config.Ou.Staff -LDAPFilter '(employeeID=*)' | ForEach-Object {
     if (-not (Test-Path (Join-Path $homeRoot $_.SamAccountName))) { $made++ }
-    $null = Initialize-LabHomeFolder -SamAccountName $_.SamAccountName
+    # The same helper the joiner process uses; it is private to the module, so it runs inside it.
+    $null = & $module { param($Name) Initialize-LabHomeFolder -SamAccountName $Name } $_.SamAccountName
 }
 Write-Step "Shares ready: $(@($config.Shares).Count) department drives, $made new home folder(s)."

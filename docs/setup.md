@@ -20,13 +20,17 @@ this repository.
 
 ## 2. Azure set-up (10 minutes)
 
-In the [Azure portal](https://portal.azure.com), open **Cloud Shell** (Bash) and run:
+1. In the [Azure portal](https://portal.azure.com), click **>_** (Cloud Shell) in the top bar. The
+   first time, choose **Bash**, then **No storage account required**, your subscription, **Apply**.
+2. At the `$` prompt, paste this line (right-click > Paste, or Ctrl+Shift+V) and press Enter. The
+   same line works every time: it fetches the latest copy of the repository first.
 
 ```bash
-git clone https://github.com/AbelYonathan-max/it-service-desk-lab.git && bash it-service-desk-lab/infra/bootstrap/bootstrap.sh AbelYonathan-max/it-service-desk-lab
+cd ~ && rm -rf it-service-desk-lab && git clone https://github.com/AbelYonathan-max/it-service-desk-lab.git && bash it-service-desk-lab/infra/bootstrap/bootstrap.sh AbelYonathan-max/it-service-desk-lab
 ```
 
-- It asks you to sign in to GitHub with a one-time code (to set the repository's variables).
+- It asks you to sign in to GitHub with a one-time code: open <https://github.com/login/device>,
+  enter the code and approve (to set the repository's variables). Press Enter at any yes/no question.
 - It creates `lab.admin@<your tenant>.onmicrosoft.com` and prints its temporary password **once**.
   Save it in your password manager.
 - It asks for the ServiceNow instance name and admin password. Press Enter to skip if step 1 is

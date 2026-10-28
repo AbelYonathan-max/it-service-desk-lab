@@ -2,7 +2,7 @@
 # One-time set-up for the IT service desk lab, run by the Azure subscription owner.
 #
 # In Azure Cloud Shell (Bash):
-#   git clone https://github.com/OWNER/REPO.git && bash REPO/infra/bootstrap/bootstrap.sh OWNER/REPO
+#   cd ~ && rm -rf REPO && git clone https://github.com/OWNER/REPO.git && bash REPO/infra/bootstrap/bootstrap.sh OWNER/REPO
 #
 # What it does, all inside your own subscription and tenant:
 #   1. Signs in to GitHub with a one-time code, to read the repository's IDs and set its variables.

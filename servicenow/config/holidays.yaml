@@ -1,4 +1,5 @@
-# England and Wales bank holidays, from https://www.gov.uk/bank-holidays.json.
+# England and Wales bank holidays, from https://www.gov.uk/bank-holidays.json; years GOV.UK does
+# not list yet follow the usual rules until it does.
 # The service desk is closed on these days: working-hours SLAs do not count them.
 # `sdlab holidays` refreshes this file.
 england-and-wales:

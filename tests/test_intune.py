@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -8,6 +9,7 @@ import respx
 from servicedesk.entra import BUSINESS_PREMIUM, license_group, tenant_status
 from servicedesk.graph import Graph, GraphError, odata_quote, token_from_azure_cli
 from servicedesk.intune import Intune, IntuneError, Policy, load_policies, settings_key
+from servicedesk.people import REPO_ROOT
 from tests.fake_graph import FakeGraph, catalogue_for
 
 LICENCE_GROUP = "GG-LIC-M365-BusinessPremium"
@@ -335,3 +337,14 @@ def test_token_comes_from_the_environment_first(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("GRAPH_TOKEN", "from-env")
     assert token_from_azure_cli() == "from-env"
     assert odata_quote("O'Brien") == "'O''Brien'"
+
+
+def test_intune_and_group_policy_agree(policies: list[Policy]) -> None:
+    """Cloud-native and domain-joined PCs get the same sign-in notice and screen lock."""
+    gpo = (REPO_ROOT / "lab" / "dc" / "04-Build-GroupPolicy.ps1").read_text(encoding="utf-8")
+    notice = re.search(r"'LegalNoticeText' '([^']*)'", gpo)
+    timeout = re.search(r"'InactivityTimeoutSecs' (\d+)", gpo)
+    assert notice and timeout
+    settings = {s["id"].rsplit("_", 1)[-1]: s for p in policies for s in p.settings}
+    assert settings["messagetextforusersattemptingtologon"]["string"] == notice.group(1)
+    assert settings["machineinactivitylimit"]["integer"] == int(timeout.group(1))

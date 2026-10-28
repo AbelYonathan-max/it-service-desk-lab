@@ -10,6 +10,7 @@
     sdlab m365 plan                what `apply` would change in Intune and licensing
     sdlab m365 apply               Intune policies from lab/intune, licence for the licence group
     sdlab m365 status              staff synced, licences, PCs and policy results
+    sdlab holidays                 refresh the bank holidays from GOV.UK
 
 ServiceNow commands read SERVICENOW_INSTANCE, SERVICENOW_USERNAME (default admin) and
 SERVICENOW_PASSWORD from the environment. Microsoft 365 commands use the Azure CLI's sign-in (or
@@ -176,6 +177,13 @@ def cmd_m365(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_holidays(_: argparse.Namespace) -> int:
+    from servicedesk.holidays import refresh
+
+    print(refresh())
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sdlab", description="IT service desk lab tooling.")
     top = parser.add_subparsers(dest="area", required=True)
@@ -219,6 +227,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     m365.add_parser("status", help="staff synced, licences, PCs and policy results").set_defaults(
         func=cmd_m365
     )
+
+    top.add_parser("holidays", help="refresh the bank holidays from GOV.UK").set_defaults(func=cmd_holidays)
 
     args = parser.parse_args(argv)
     try:

@@ -34,7 +34,7 @@ IDENTITY_NAME="${IDENTITY_NAME:-id-servicedesk-github}"
 ADMIN_ALIAS="${ADMIN_ALIAS:-lab.admin}"
 GRAPH_APP_ID="00000003-0000-0000-c000-000000000000"
 GRAPH="https://graph.microsoft.com"
-PREFERRED_REGIONS="uksouth ukwest northeurope westeurope swedencentral francecentral germanywestcentral norwayeast switzerlandnorth polandcentral italynorth spaincentral"
+PREFERRED_REGIONS="uksouth ukwest northeurope westeurope swedencentral francecentral germanywestcentral norwayeast switzerlandnorth italynorth spaincentral"
 # Microsoft Graph application permissions for the deploy identity (lab/intune and the Entra workflow):
 #   DeviceManagementConfiguration.ReadWrite.All  compliance, configuration and endpoint security policies
 #   DeviceManagementManagedDevices.Read.All      report which devices are enrolled and compliant
@@ -309,25 +309,66 @@ else
 fi
 
 say "ServiceNow developer instance (optional)"
+# sn_check NAME PASSWORD signs in to the instance's API as admin: ok, refused (wrong password),
+# answered (not by the API, usually because it is asleep), missing (no such instance) or unreachable.
+sn_check() {
+  local password="${2//\\/\\\\}" reply
+  password="${password//\"/\\\"}"
+  # The password goes to curl on standard input, not on its command line.
+  reply=$(printf 'user = "admin:%s"\n' "$password" | curl -sS -m 30 -K - -H "Accept: application/json" \
+    -w '\n%{http_code} %{content_type}' "https://$1.service-now.com/api/now/table/sys_user?sysparm_limit=1&sysparm_fields=sys_id" \
+    2>/dev/null) || { if [ $? -eq 6 ]; then echo missing; else echo unreachable; fi; return; }
+  case "${reply##*$'\n'}" in
+    200\ *json*) echo ok ;;
+    401\ *) echo refused ;;
+    *) echo answered ;;
+  esac
+}
 SN_SET=false
+SN_INSTANCE=""
 if [ "$GH" = true ] && gh secret list --repo "$REPO" 2>/dev/null | grep -q '^SERVICENOW_ADMIN_PASSWORD'; then
   SN_SET=true
   echo "   already stored in GitHub"
-elif [ "$GH" = true ] && [ -t 0 ]; then
-  echo "   From https://developer.servicenow.com > your instance: the instance name (dev123456) and the admin password."
-  read -r -p "   Instance name, or Enter to skip for now: " SN_INSTANCE
-  if [ -n "$SN_INSTANCE" ]; then
-    SN_INSTANCE="${SN_INSTANCE#https://}"
-    SN_INSTANCE="${SN_INSTANCE%%.*}"
-    read -r -s -p "   admin password (hidden): " SN_PASSWORD
-    echo
-    printf '%s' "$SN_INSTANCE" | gh secret set SERVICENOW_INSTANCE --repo "$REPO"
-    printf '%s' "$SN_PASSWORD" | gh secret set SERVICENOW_ADMIN_PASSWORD --repo "$REPO"
-    unset SN_PASSWORD
-    SN_SET=true
-    echo "   stored as GitHub secrets SERVICENOW_INSTANCE and SERVICENOW_ADMIN_PASSWORD"
+  if [ -t 0 ]; then
+    read -r -p "   Enter to keep it, or type an instance name to replace it: " SN_INSTANCE
   fi
+elif [ "$GH" = true ] && [ -t 0 ]; then
+  echo "   From https://developer.servicenow.com once your instance is ready: its name (the dev123456 in"
+  echo "   https://dev123456.service-now.com) and its admin password."
+  read -r -p "   Instance name, or Enter to skip for now: " SN_INSTANCE
 fi
+while [ -n "$SN_INSTANCE" ]; do
+  SN_INSTANCE="${SN_INSTANCE#*://}"
+  SN_INSTANCE="${SN_INSTANCE%%[./]*}"
+  SN_INSTANCE="${SN_INSTANCE,,}"
+  RESULT=missing
+  if [[ "$SN_INSTANCE" =~ ^[a-z0-9-]+$ ]]; then
+    read -r -s -p "   admin password for $SN_INSTANCE (hidden), or Enter to skip: " SN_PASSWORD
+    echo
+    [ -n "$SN_PASSWORD" ] || break
+    RESULT=$(sn_check "$SN_INSTANCE" "$SN_PASSWORD")
+  fi
+  case "$RESULT" in
+    missing)
+      echo "   There is no instance called '$SN_INSTANCE'. The name is the first part of the instance's"
+      echo "   address, https://NAME.service-now.com, shown at developer.servicenow.com."
+      read -r -p "   Instance name, or Enter to skip for now: " SN_INSTANCE
+      continue ;;
+    refused)
+      echo "   $SN_INSTANCE refused that password for admin (the instance's admin password, not your"
+      echo "   developer account's)."
+      continue ;;
+    ok) echo "   signed in to $SN_INSTANCE as admin" ;;
+    answered) echo "   $SN_INSTANCE answered, but not with its API (probably asleep), so the password is unchecked" ;;
+    unreachable) echo "   could not reach $SN_INSTANCE from here, so it is unchecked" ;;
+  esac
+  printf '%s' "$SN_INSTANCE" | gh secret set SERVICENOW_INSTANCE --repo "$REPO"
+  printf '%s' "$SN_PASSWORD" | gh secret set SERVICENOW_ADMIN_PASSWORD --repo "$REPO"
+  SN_SET=true
+  echo "   stored as GitHub secrets SERVICENOW_INSTANCE and SERVICENOW_ADMIN_PASSWORD"
+  break
+done
+unset SN_PASSWORD
 
 # Budgets are not available on every subscription type.
 case "$QUOTA_ID" in

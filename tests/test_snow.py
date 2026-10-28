@@ -15,7 +15,17 @@ def sn() -> ServiceNow:
 def test_connection_accepts_a_name_or_a_url() -> None:
     assert Connection("dev1", "a", "b").base_url == "https://dev1.service-now.com"
     assert Connection("https://dev1.service-now.com/", "a", "b").base_url == "https://dev1.service-now.com"
+    assert Connection("dev1.service-now.com", "a", "b").base_url == "https://dev1.service-now.com"
+    copied = "https://Dev1.service-now.com/now/nav/ui/classic/params/target/home.do"
+    assert Connection(copied, "a", "b").base_url == "https://dev1.service-now.com"
     assert "secret" not in repr(Connection("dev1", "admin", "secret"))
+
+
+@pytest.mark.parametrize("value", ["someone@example.com", "dev 123456", "https:///home", "dev1/"])
+def test_a_value_that_is_not_an_instance_is_refused_without_showing_it(value: str) -> None:
+    with pytest.raises(ServiceNowError, match="not an instance name") as caught:
+        Connection.from_environment({"SERVICENOW_INSTANCE": value, "SERVICENOW_PASSWORD": "pw"})
+    assert value not in str(caught.value)
 
 
 def test_connection_from_environment_needs_instance_and_password() -> None:
@@ -42,6 +52,15 @@ def test_query_pages_through_results(sn: ServiceNow, monkeypatch: pytest.MonkeyP
     assert [r["sys_id"] for r in records] == ["1", "2", "3"]
     assert route.calls[1].request.url.params["sysparm_offset"] == "2"
     assert route.calls[0].request.url.params["sysparm_exclude_reference_link"] == "true"
+
+
+@respx.mock
+def test_an_instance_that_does_not_exist_says_so(sn: ServiceNow) -> None:
+    route = respx.get(f"{BASE}/api/now/table/sys_user")
+    route.side_effect = httpx.ConnectError("[Errno -2] Name or service not known")
+    with pytest.raises(ServiceNowError, match="There is no ServiceNow instance at"):
+        sn.first("sys_user", "user_name=admin")
+    assert route.call_count == 1
 
 
 @respx.mock

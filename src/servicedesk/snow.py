@@ -11,6 +11,7 @@ A developer instance that has gone to sleep answers with a web page instead of J
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -22,6 +23,14 @@ Record = dict[str, Any]
 
 RETRY_STATUS = {429, 500, 502, 503, 504}
 PAGE_SIZE = 500
+HOST_NAME = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$")
+# What getaddrinfo says, on Linux, macOS and Windows, when a host name does not exist.
+NO_SUCH_HOST = (
+    "Name or service not known",
+    "nodename nor servname",
+    "No address associated",
+    "getaddrinfo failed",
+)
 
 
 class ServiceNowError(RuntimeError):
@@ -44,12 +53,21 @@ class Connection:
 
     @property
     def base_url(self) -> str:
-        value = self.instance.strip().rstrip("/")
-        if value.startswith("https://"):
-            return value
-        if "." in value:
-            return f"https://{value}"
-        return f"https://{value}.service-now.com"
+        """``https://`` and the host: from a name (dev123456), a host name, or an address copied from a browser."""
+        value = self.instance.strip()
+        if "://" not in value:
+            value = "https://" + (value if "." in value else f"{value}.service-now.com")
+        try:
+            url = httpx.URL(value)
+        except httpx.InvalidURL:
+            url = None
+        if url is None or url.userinfo or not HOST_NAME.match(url.host):
+            # The value itself is never shown: it is a secret in the workflows.
+            raise ServiceNowError(
+                "SERVICENOW_INSTANCE is not an instance name. It should be the name from developer.servicenow.com, "
+                "like dev123456, or the instance's address, like https://dev123456.service-now.com."
+            )
+        return f"https://{url.host}"
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> Connection:
@@ -62,7 +80,9 @@ class Connection:
                 "No ServiceNow connection: set SERVICENOW_INSTANCE and SERVICENOW_PASSWORD "
                 "(and SERVICENOW_USERNAME if it is not admin)."
             )
-        return cls(instance, env.get("SERVICENOW_USERNAME", "admin").strip() or "admin", password)
+        connection = cls(instance, env.get("SERVICENOW_USERNAME", "admin").strip() or "admin", password)
+        _ = connection.base_url  # checks the instance name before any request is made
+        return connection
 
     def __repr__(self) -> str:  # never show the password
         return f"Connection(instance={self.instance!r}, username={self.username!r})"
@@ -141,6 +161,11 @@ class ServiceNow:
                     method, url, params=params, json=json, headers=headers, auth=self._auth
                 )
             except httpx.TransportError as error:
+                if any(text in str(error) for text in NO_SUCH_HOST):
+                    raise ServiceNowError(
+                        f"There is no ServiceNow instance at {self.connection.base_url}. Check the instance name "
+                        "at developer.servicenow.com: a released instance is gone, and a new one has a new name."
+                    ) from error
                 if attempt < self.max_attempts:
                     self._sleep(2**attempt)
                     continue

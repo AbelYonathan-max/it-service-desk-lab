@@ -117,7 +117,7 @@ def connect_lab(sn: ServiceNow, config: Config, *, key_vault: str) -> str:
     user_id = ensure_integration_user(sn, config)
     set_password(sn, user_id, password)
 
-    instance = sn.connection.instance
+    instance = sn.connection.base_url  # the agent reads an https:// address as it is
     for attempt in range(1, 4):
         try:
             with ServiceNow(Connection(instance, USER_NAME, password)) as agent:

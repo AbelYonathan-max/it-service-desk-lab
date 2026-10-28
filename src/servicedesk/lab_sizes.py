@@ -7,13 +7,16 @@ which lab VMs exist already (``az vm list -d``), and this module picks a size fo
 
 * a VM that exists keeps its size;
 * a new VM gets the first size in its preference list that is offered here, supports Trusted Launch
-  (Generation 2 with Secure Boot and vTPM), has at least 4 GB of memory, and fits in what is left of
-  both the regional quota and its family's quota;
+  (Generation 2 with Secure Boot and vTPM), works with a SCSI disk controller, has at least 4 GB of
+  memory, and fits in what is left of both the regional quota and its family's quota;
 * if the Windows 11 PC does not fit, the lab is built without it rather than failing.
 
-Usage (the lab workflow does this):
+Usage (the lab workflow does this, region by region until one can take the domain controller):
+    az vm list-skus --location uksouth --resource-type virtualMachines --all -o json > skus.json
     python -m servicedesk.lab_sizes --skus skus.json --usage usage.json --vms vms.json --location uksouth
-It prints ``key=value`` lines for ``$GITHUB_OUTPUT`` and explains its choices on standard error.
+``--all`` matters: without it the Azure CLI hides the sizes closed to the subscription, so the
+reason for skipping them is lost. It prints ``key=value`` lines for ``$GITHUB_OUTPUT``, explains its
+choices on standard error, and exits with 1 when the domain controller does not fit.
 """
 
 from __future__ import annotations
@@ -26,14 +29,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# Two vCPUs each, cheapest first: burstable B sizes, then 4 GB general purpose, then 8 GB, then
+# compute and memory optimised. Free trials cannot use every size in every region.
 DC_CANDIDATES = [
     "Standard_B2s",
     "Standard_B2als_v2",
     "Standard_B2as_v2",
     "Standard_B2ls_v2",
     "Standard_B2s_v2",
+    "Standard_B2ms",
+    "Standard_D2als_v5",
+    "Standard_D2ls_v5",
     "Standard_D2as_v5",
     "Standard_D2s_v5",
+    "Standard_D2ads_v5",
+    "Standard_D2ds_v5",
+    "Standard_D2as_v4",
+    "Standard_D2s_v4",
+    "Standard_D2s_v3",
+    "Standard_F2s_v2",
+    "Standard_E2as_v5",
+    "Standard_E2s_v5",
 ]
 WS_CANDIDATES = DC_CANDIDATES
 DC_VM = "vm-dc01"
@@ -51,6 +67,7 @@ class Sku:
     gen2: bool
     trusted_launch: bool
     restricted: bool
+    scsi: bool = True  # newer sizes (v6) only take NVMe disks, which the lab's VMs do not use
 
 
 @dataclass
@@ -96,6 +113,7 @@ def parse_skus(raw_skus: list[dict[str, Any]], location: str) -> dict[str, Sku]:
             gen2="V2" in (_capability(raw, "HyperVGenerations") or ""),
             trusted_launch=(_capability(raw, "TrustedLaunchDisabled") or "False").lower() != "true",
             restricted=restricted,
+            scsi="SCSI" in (_capability(raw, "DiskControllerTypes") or "SCSI"),
         )
     return skus
 
@@ -117,6 +135,8 @@ def unusable_reason(sku: Sku | None) -> str | None:
         return "not available to this subscription here"
     if not sku.gen2 or not sku.trusted_launch:
         return "no Trusted Launch (Secure Boot and vTPM)"
+    if not sku.scsi:
+        return "NVMe disks only"
     if sku.memory_gb < MIN_MEMORY_GB:
         return f"only {sku.memory_gb:g} GB of memory"
     return None
@@ -168,10 +188,7 @@ def choose(
 
     choice.dc_size = keep_existing(DC_VM) or pick(DC_VM, dc_candidates or DC_CANDIDATES)
     if choice.dc_size is None:
-        choice.notes.append(
-            "No size fits for the domain controller. The lab needs 2 vCPUs of quota for it (4 with the PC): "
-            "upgrade a free trial to pay-as-you-go, or ask for more quota in the portal (Quotas > Compute)."
-        )
+        choice.notes.append("No size here fits the domain controller.")
         return choice
 
     if want_ws:

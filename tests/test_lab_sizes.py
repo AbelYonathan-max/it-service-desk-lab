@@ -6,12 +6,14 @@ from servicedesk import lab_sizes
 from servicedesk.lab_sizes import choose, parse_free_quota, parse_skus
 
 
-def sku(name, family, vcpus=2, memory=4, gens="V1,V2", tl_disabled=None, restricted_in=None):
+def sku(name, family, vcpus=2, memory=4, gens="V1,V2", tl_disabled=None, restricted_in=None, disks=None):
     capabilities = [
         {"name": "vCPUs", "value": str(vcpus)},
         {"name": "MemoryGB", "value": str(memory)},
         {"name": "HyperVGenerations", "value": gens},
     ]
+    if disks:
+        capabilities.append({"name": "DiskControllerTypes", "value": disks})
     if tl_disabled:
         capabilities.append({"name": "TrustedLaunchDisabled", "value": "True"})
     restrictions = []
@@ -79,10 +81,14 @@ def test_pc_is_dropped_when_only_two_vcpus_are_free():
     assert choice.outputs() == {"dc_size": "Standard_B2s", "ws_size": "", "enable_ws01": "false"}
 
 
-def test_no_quota_at_all_explains_what_to_do():
+def test_no_quota_at_all_means_no_domain_controller_here():
     choice = choose(parse_skus(CATALOGUE, "uksouth"), parse_free_quota(usage(0)), {})
     assert choice.dc_size is None
-    assert any("pay-as-you-go" in note for note in choice.notes)
+    assert (
+        "vm-dc01: Standard_B2s skipped, not enough vCPU quota left (standardBSFamily, regional)"
+        in choice.notes
+    )
+    assert choice.notes[-1] == "No size here fits the domain controller."
 
 
 def test_existing_vms_keep_their_size_and_a_deallocated_one_needs_its_cores_back():
@@ -136,3 +142,29 @@ def test_cli_prints_github_outputs(tmp_path, capsys):
     assert code == 0
     assert out.out.splitlines() == ["dc_size=Standard_B2s", "ws_size=Standard_D2as_v5", "enable_ws01=true"]
     assert "vm-dc01: Standard_B2s" in out.err
+
+
+def test_sizes_that_only_take_nvme_disks_are_skipped():
+    catalogue = [
+        sku("Standard_D2als_v5", "standardDALSv5Family", disks="SCSI, NVMe"),
+        sku("Standard_B2s", "standardBSFamily", restricted_in="uksouth"),
+    ]
+    nvme = sku("Standard_D2als_v6", "standardDALSv6Family", disks="NVMe")
+    choice = choose(
+        parse_skus([*catalogue, nvme], "uksouth"),
+        parse_free_quota(usage(4)),
+        {},
+        dc_candidates=["Standard_D2als_v6", "Standard_B2s", "Standard_D2als_v5"],
+    )
+    assert choice.dc_size == "Standard_D2als_v5"
+    assert "vm-dc01: Standard_D2als_v6 skipped, NVMe disks only" in choice.notes
+
+
+def test_a_region_closed_to_the_subscription_fails_so_the_next_one_is_tried(tmp_path, capsys):
+    closed = [sku(name, "standardBSFamily", restricted_in="uksouth") for name in lab_sizes.DC_CANDIDATES]
+    files = {"skus": closed, "usage": usage(4), "vms": []}
+    for name, content in files.items():
+        (tmp_path / f"{name}.json").write_text(json.dumps(content))
+    args = [f"--{name}={tmp_path / f'{name}.json'}" for name in files]
+    assert lab_sizes.main([*args, "--location", "uksouth"]) == 1
+    assert "No size here fits the domain controller." in capsys.readouterr().err

@@ -68,7 +68,7 @@ sdlab report 2026-09 --sample   # the SLA report from the simulated history, no 
 
 ## Tests
 
-CI runs on every push: 98 Python tests (pytest), 62 PowerShell tests (Pester, on PowerShell 7 and
+CI runs on every push: 100 Python tests (pytest), 62 PowerShell tests (Pester, on PowerShell 7 and
 on Windows PowerShell 5.1, which the domain controller runs), Terraform tests with mocked
 providers, and ruff, mypy, PSScriptAnalyzer, bandit, pip-audit, shellcheck and actionlint. The
 ServiceNow scripts are checked as ES5, the JavaScript the instance runs.

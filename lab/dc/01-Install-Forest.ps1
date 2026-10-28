@@ -17,6 +17,16 @@ if ($role -ge 4) {
     return
 }
 
+Write-Step 'Growing C: to fill the OS disk'
+# The small-disk image has a 30 GB C:; Terraform gives the disk more room than that.
+try {
+    $largest = (Get-PartitionSupportedSize -DriveLetter C).SizeMax
+    if ($largest - (Get-Partition -DriveLetter C).Size -gt 1GB) { Resize-Partition -DriveLetter C -Size $largest }
+}
+catch {
+    Write-Step "Could not grow C: ($($_.Exception.Message)); carrying on with its current size."
+}
+
 Write-Step 'Preparing the data disk'
 $raw = Get-Disk | Where-Object PartitionStyle -EQ 'RAW' | Sort-Object Number | Select-Object -First 1
 if ($raw) {

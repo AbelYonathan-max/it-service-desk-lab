@@ -1,0 +1,229 @@
+name: Lab
+
+# Builds and runs the Azure lab. Run it from the Actions tab (Lab > Run workflow):
+#   deploy   Terraform, then build or update the domain controller (stages 01 to 06) and check the PC
+#   build    run the build stages again without Terraform (or one stage, named in "stage")
+#   start    start both VMs
+#   stop     stop and deallocate both VMs, so compute stops costing money
+#   doctor   health report from the domain controller and the PC
+#   destroy  delete everything Terraform made (the resource groups and the Terraform state stay)
+# It signs in to Azure with OpenID Connect: GitHub issues a short-lived token for this repository's
+# "lab" environment and Azure exchanges it for the deploy identity. No Azure password or key is stored.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do
+        type: choice
+        options: [deploy, build, start, stop, doctor, destroy]
+        default: deploy
+      stage:
+        description: With build, run only this stage (for example 03-Build-FileShares)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: lab
+  cancel-in-progress: false
+
+jobs:
+  lab:
+    name: ${{ inputs.action }}
+    # Skipped until the bootstrap script has run and set the repository variables.
+    if: vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    environment: lab
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      ACTION: ${{ inputs.action }}
+      ONLY_STAGE: ${{ inputs.stage }}
+      LAB_RG: ${{ vars.LAB_RESOURCE_GROUP }}
+      LOCATION: ${{ vars.AZURE_LOCATION }}
+      # The tenant's domain is a secret only so that it is masked in these public logs.
+      UPN_SUFFIX: ${{ secrets.ENTRA_DOMAIN }}
+      TF_VAR_resource_group_name: ${{ vars.LAB_RESOURCE_GROUP }}
+      TF_VAR_location: ${{ vars.AZURE_LOCATION }}
+      TF_VAR_enable_budget: ${{ vars.ENABLE_BUDGET || 'false' }}
+      TF_VAR_admin_object_ids: ${{ vars.LAB_ADMIN_OBJECT_IDS || '[]' }}
+      TF_VAR_ws01_entra_join: ${{ vars.ENTRA_READY || 'false' }}
+    # Naming bash adds -o pipefail, so a failure anywhere in a pipeline fails the step.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Sign in to Azure (OIDC, no stored secret)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v4
+        if: inputs.action == 'deploy' || inputs.action == 'destroy'
+        with:
+          terraform_version: 1.17.0
+          terraform_wrapper: false
+
+      # Right after the bootstrap script, Azure can take a few minutes to apply the deploy identity's
+      # new permissions, so this retries.
+      - name: Terraform init
+        if: inputs.action == 'deploy' || inputs.action == 'destroy'
+        working-directory: infra/terraform
+        env:
+          STATE_RG: ${{ vars.TFSTATE_RESOURCE_GROUP }}
+          STATE_ACCOUNT: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if terraform init -backend-config="resource_group_name=$STATE_RG" \
+              -backend-config="storage_account_name=$STATE_ACCOUNT" -backend-config="container_name=tfstate" \
+              -backend-config="key=it-service-desk-lab.tfstate" -backend-config="use_oidc=true" \
+              -backend-config="use_azuread_auth=true"; then exit 0; fi
+            echo "init failed (attempt $attempt), retrying in 30 seconds"
+            sleep 30
+          done
+          exit 1
+
+      # Free trials have 4 vCPUs per region and not every size is offered to every subscription, so
+      # the sizes come from what Azure says is available. Existing VMs keep their size.
+      - name: Choose VM sizes and images
+        id: choose
+        if: inputs.action == 'deploy'
+        env:
+          DC_SIZES: ${{ vars.LAB_DC_SIZES }}
+          WS_SIZES: ${{ vars.LAB_WS_SIZES }}
+        run: |
+          az vm list-skus --location "$LOCATION" --resource-type virtualMachines -o json > skus.json
+          az vm list-usage --location "$LOCATION" -o json > usage.json
+          az vm list --resource-group "$LAB_RG" --show-details -o json > vms.json
+          PYTHONPATH=src python3 -m servicedesk.lab_sizes --skus skus.json --usage usage.json --vms vms.json \
+            --location "$LOCATION" --dc-candidates "$DC_SIZES" --ws-candidates "$WS_SIZES" >> "$GITHUB_OUTPUT"
+
+          # Images only matter when a VM is first created; Terraform ignores them afterwards.
+          SERVER_SKUS=$(az vm image list-skus --location "$LOCATION" --publisher MicrosoftWindowsServer --offer WindowsServer --query "[].name" -o tsv)
+          for sku in 2025-datacenter-smalldisk-g2 2025-datacenter-g2 2022-datacenter-smalldisk-g2 2022-datacenter-g2; do
+            if grep -qx "$sku" <<<"$SERVER_SKUS"; then echo "server_sku=$sku" >> "$GITHUB_OUTPUT"; break; fi
+          done
+          CLIENT_SKU=$(az vm image list-skus --location "$LOCATION" --publisher MicrosoftWindowsDesktop --offer windows-11 --query "[].name" -o tsv \
+            | grep -E '^win11-[0-9]{2}h[12]-ent$' | sort -V | tail -1 || true)
+          echo "client_sku=${CLIENT_SKU:-win11-25h2-ent}" >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+      - name: Terraform apply
+        if: inputs.action == 'deploy'
+        working-directory: infra/terraform
+        env:
+          TF_VAR_dc_size: ${{ steps.choose.outputs.dc_size }}
+          TF_VAR_ws_size: ${{ steps.choose.outputs.ws_size || 'Standard_B2s' }}
+          TF_VAR_enable_ws01: ${{ steps.choose.outputs.enable_ws01 }}
+          TF_VAR_server_image_sku: ${{ steps.choose.outputs.server_sku }}
+          TF_VAR_client_image_sku: ${{ steps.choose.outputs.client_sku }}
+        run: |
+          for attempt in 1 2 3; do
+            if terraform apply -auto-approve 2>&1 | tee apply.log; then exit 0; fi
+            # New role assignments can take a few minutes to work everywhere; anything else is real.
+            if ! grep -qE "AuthorizationFailed|does not have authorization|PrincipalNotFound|RetryableError|TooManyRequests|context deadline exceeded" apply.log; then
+              exit 1
+            fi
+            echo "apply failed on something that usually clears by itself (attempt $attempt), retrying in 60 seconds"
+            sleep 60
+          done
+          exit 1
+
+      - name: Terraform destroy
+        if: inputs.action == 'destroy'
+        working-directory: infra/terraform
+        run: terraform destroy -auto-approve
+
+      - name: Find the lab
+        if: inputs.action != 'destroy'
+        run: |
+          DC_VM=$(az vm list -g "$LAB_RG" --query "[?name=='vm-dc01'].name | [0]" -o tsv)
+          WS_VM=$(az vm list -g "$LAB_RG" --query "[?name=='vm-ws01'].name | [0]" -o tsv)
+          KEY_VAULT=$(az keyvault list -g "$LAB_RG" --query "[0].name" -o tsv)
+          if [ -z "$DC_VM" ]; then echo "There is no lab yet: run the workflow with action deploy."; exit 1; fi
+          { echo "DC_VM=$DC_VM"; echo "WS_VM=$WS_VM"; echo "KEY_VAULT=$KEY_VAULT"; } >> "$GITHUB_ENV"
+          echo "domain controller: $DC_VM, PC: ${WS_VM:-none}, Key Vault: $KEY_VAULT"
+
+      - name: Start the VMs
+        if: inputs.action == 'deploy' || inputs.action == 'build' || inputs.action == 'start' || inputs.action == 'doctor'
+        run: |
+          for vm in $DC_VM $WS_VM; do
+            state=$(az vm get-instance-view -g "$LAB_RG" -n "$vm" --query "instanceView.statuses[?starts_with(code, 'PowerState/')].displayStatus | [0]" -o tsv)
+            echo "$vm: $state"
+            if [ "$state" != "VM running" ]; then az vm start -g "$LAB_RG" -n "$vm" --no-wait; fi
+          done
+          for vm in $DC_VM $WS_VM; do
+            az vm wait -g "$LAB_RG" -n "$vm" --custom "instanceView.statuses[?code=='PowerState/running']" --timeout 900
+            echo "$vm is running"
+          done
+
+      - name: Build the domain controller
+        if: inputs.action == 'deploy' || inputs.action == 'build'
+        run: |
+          STAGES="01-Install-Forest 02-Build-Directory 03-Build-FileShares 04-Build-GroupPolicy 05-Install-Agent 06-Prepare-CloudSync"
+          if [ -n "$ONLY_STAGE" ]; then STAGES="$ONLY_STAGE"; fi
+          ARGS=("Repository=$GITHUB_REPOSITORY" "Ref=$GITHUB_SHA" "Role=dc" "KeyVault=$KEY_VAULT")
+          if [ -n "$UPN_SUFFIX" ]; then ARGS+=("UpnSuffix=$UPN_SUFFIX"); fi
+          for stage in $STAGES; do
+            echo "::group::Stage $stage"
+            infra/scripts/run-on-vm.sh "$DC_VM" lab/Invoke-LabStage.ps1 "Stage=$stage" "${ARGS[@]}" | tee stage.log
+            echo "::endgroup::"
+            # Stage 01 restarts the server after promoting it; nothing to wait for if it was a DC already.
+            if [ "$stage" = "01-Install-Forest" ] && ! grep -q "Already a domain controller" stage.log; then
+              echo "Waiting for the domain controller to restart and start its directory services"
+              sleep 90
+              for _ in $(seq 1 40); do
+                status=$(ATTEMPTS=4 infra/scripts/run-on-vm.sh "$DC_VM" lab/dc/Test-LabDcReady.ps1 2>&1 || true)
+                echo "   $(tail -1 <<<"$status")"
+                if grep -q '^READY' <<<"$status"; then break; fi
+                sleep 30
+              done
+              grep -q '^READY' <<<"$status" || { echo "The domain controller did not come back ready."; exit 1; }
+            fi
+          done
+
+      - name: Check the domain controller
+        if: inputs.action == 'deploy' || inputs.action == 'doctor'
+        run: infra/scripts/run-on-vm.sh "$DC_VM" lab/dc/Get-LabHealth.ps1
+
+      - name: Check the PC
+        if: (inputs.action == 'deploy' || inputs.action == 'doctor') && env.WS_VM != ''
+        run: infra/scripts/run-on-vm.sh "$WS_VM" lab/ws/Get-WorkstationStatus.ps1
+
+      - name: Stop the VMs
+        if: inputs.action == 'stop'
+        run: |
+          for vm in $DC_VM $WS_VM; do az vm deallocate -g "$LAB_RG" -n "$vm" --no-wait; done
+          for vm in $DC_VM $WS_VM; do
+            az vm wait -g "$LAB_RG" -n "$vm" --custom "instanceView.statuses[?code=='PowerState/deallocated']" --timeout 900
+            echo "$vm is deallocated"
+          done
+
+      - name: Summary
+        if: always() && inputs.action != 'destroy'
+        run: |
+          {
+            echo "### Lab: $ACTION"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Domain controller | \`${DC_VM:-none}\` (DC01, corp.kestrel.internal) |"
+            echo "| Windows 11 PC | \`${WS_VM:-none}\` (WS01) |"
+            echo "| Key Vault | \`${KEY_VAULT:-none}\` |"
+            echo
+            echo "Sign in through the Azure portal: the VM > Connect > Bastion. Domain controller: \`KESTREL\\sdlab.admin\`,"
+            echo "password in the Key Vault secret \`dc01-admin-password\`. The VMs shut down at 19:00 UK time every day;"
+            echo "run this workflow with **stop** when you finish, and **start** to carry on."
+          } >> "$GITHUB_STEP_SUMMARY"

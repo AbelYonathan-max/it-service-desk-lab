@@ -1,0 +1,64 @@
+# Service levels (fictional, typical of a UK borough council). Working hours are those of the
+# "Kestrel service desk hours" schedule: 08:00 to 18:00 on working days, so one working day is
+# 10 working hours.
+#
+# `sdlab sn apply` turns each target into a ServiceNow SLA definition. The monthly report measures
+# the same targets again from the tickets' own timestamps, so the two can be checked against each
+# other.
+#
+# Response: from logging until an analyst starts work (Actual start, set when the ticket first goes
+#           to In Progress) or resolves it.
+# Resolution: from logging until Resolved. The clock stops while the ticket is On Hold (waiting for
+#           the caller or a supplier).
+# A priority change starts the new priority's SLAs from when the ticket was logged.
+
+# Monthly targets: the share of tickets that must meet their SLA.
+kpi_targets:
+  response: 95
+  resolution: 90
+  fulfilment: 90
+
+incident:
+  - priority: 1
+    label: Critical
+    example: A whole service is down, or many people cannot work (for example nobody can sign in).
+    clock: 24x7 # the on-call engineer is paged out of hours
+    response_minutes: 15
+    resolution_hours: 4
+  - priority: 2
+    label: High
+    example: One team cannot work, or a security incident such as a lost laptop.
+    clock: working
+    response_minutes: 30
+    resolution_hours: 8
+  - priority: 3
+    label: Moderate
+    example: One person cannot work properly, with no workaround.
+    clock: working
+    response_minutes: 120
+    resolution_hours: 30 # 3 working days
+  - priority: 4
+    label: Low
+    example: An inconvenience with a workaround.
+    clock: working
+    response_minutes: 240
+    resolution_hours: 50 # 5 working days
+  # Priority 5 (Planning) has no SLA: the date is agreed with the caller.
+
+request:
+  name: Request fulfilment (3 working days)
+  clock: working
+  fulfilment_hours: 30
+  # The clock stops while the request waits for its approver: the desk cannot speed that up.
+  # Requests with a date of their own are not timed: they are on time if done by the end of that
+  # day (a leaver's account disabled on their last day, a move made on its effective date). The
+  # value is the catalogue variable that holds the date; the agent copies it to the task's due date.
+  dated_items:
+    Leaver: last_working_day
+    Change of role or department: effective_date
+
+# First contact resolution: an incident the service desk resolves itself, without passing it on,
+# within this long of it being logged.
+first_contact:
+  group: Service Desk
+  within_minutes: 60

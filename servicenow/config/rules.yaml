@@ -1,0 +1,51 @@
+# Server-side scripts installed on the instance. The code is in servicenow/scripts and is checked
+# as ES5 (the global scope's JavaScript engine) in CI.
+script_includes:
+  - name: KestrelServiceDesk
+    file: KestrelServiceDesk.js
+    description: Approvals, fulfilment tasks and closure for the automated People and access catalogue items.
+
+business_rules:
+  - name: Kestrel - request approvals
+    table: sc_req_item
+    when: async
+    insert: true
+    order: 100
+    file: request_approvals.js
+    description: Creates the approvals a People and access request needs, or sends it straight to fulfilment.
+
+  - name: Kestrel - keep item approval in step
+    table: sc_req_item
+    when: before
+    update: true
+    order: 100
+    file: keep_item_approval.js
+    description: Keeps a requested item at "Requested" while its approvals are outstanding.
+
+  - name: Kestrel - approval decided
+    table: sysapproval_approver
+    when: after
+    insert: true
+    update: true
+    order: 100
+    filter: stateINapproved,rejected^source_table=sc_req_item
+    file: approval_decided.js
+    description: Starts fulfilment when every approval is given, or closes the item when one is rejected.
+
+  - name: Kestrel - close item with its task
+    table: sc_task
+    when: after
+    update: true
+    order: 100
+    filter: stateIN3,4,7
+    file: task_closed.js
+    description: Closes the requested item, then the request, when the fulfilment task closes.
+
+  - name: Kestrel - record when work starts
+    table: incident
+    when: before
+    insert: true
+    update: true
+    order: 100
+    file: incident_work_start.js
+    description: Sets Actual start the first time an incident goes to In Progress or is resolved (the response SLA's stop point).

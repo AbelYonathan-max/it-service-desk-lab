@@ -1,0 +1,86 @@
+# The "People and access" catalogue items. Approved requests become a catalogue task for
+# "Identity and Access Automation"; the fulfilment agent on the domain controller carries them out in
+# Active Directory (powershell/ServiceDeskLab/Private/Fulfilment.ps1 reads these variable names).
+#
+# approval:
+#   line_manager       the line manager named on the form (or the requester's manager)
+#   new_line_manager   the person's new line manager
+#   data_owner         the shared drive's data owner (lab/config/org.json, shares[].ownerEmployeeId)
+#   none               no approval: taking access away is never delayed
+# If the approver raised the request themselves, the approval is recorded as given.
+#
+# Variable types: single_line, multi_line, select (choices), reference (a table), date.
+# choices: departments | offices | shares | a list of [value, label] pairs.
+
+catalog: Service Catalog
+category:
+  title: People and access
+  description: Starters, leavers, moves and shared drive access. Approved requests are carried out in Active Directory automatically, usually within a few minutes.
+automation_group: Identity and Access Automation
+fallback_group: Identity and Access
+delivery_days: 3
+
+items:
+  - name: New starter
+    short_description: A network account, email address, home drive and department drives for someone joining the council.
+    description: >-
+      Ask for this as soon as HR confirms the start date: the account is ready the evening before
+      the start date and is switched on at 07:00 on the day. The line manager approves the request
+      and is told how to collect the temporary password.
+    approval: line_manager
+    task: "Create the account for {first_name} {last_name} ({department}), starting {start_date}"
+    variables:
+      - {name: first_name, question: First name, type: single_line, mandatory: true}
+      - {name: last_name, question: Last name, type: single_line, mandatory: true}
+      - {name: employee_id, question: Employee ID (from HR), type: single_line, mandatory: true, help: "E followed by five digits, for example E10067."}
+      - {name: department, question: Department, type: select, choices: departments, mandatory: true}
+      - {name: job_title, question: Job title, type: single_line, mandatory: true}
+      - {name: line_manager, question: Line manager, type: reference, table: sys_user, mandatory: true}
+      - {name: office, question: Main office, type: select, choices: offices, mandatory: true}
+      - {name: contract_type, question: Contract type, type: select, mandatory: true, default: permanent,
+         choices: [[permanent, Permanent], [temporary, Temporary (fixed term)], [contractor, Contractor]]}
+      - {name: start_date, question: Start date, type: date, mandatory: true}
+      - {name: end_date, question: End date (temporary staff and contractors), type: date}
+
+  - name: Leaver
+    short_description: Remove a leaver's access at the end of their last working day.
+    description: >-
+      Access ends at 17:30 on the last working day. The account is disabled, removed from every
+      group and moved to the Leavers OU, and deleted 30 days later. Tell us about shared mailboxes
+      or files that need handing over.
+    approval: none
+    approval_note: removing access is never delayed
+    task: "Remove access for {leaver} at the end of {last_working_day}"
+    variables:
+      - {name: leaver, question: "Who is leaving?", type: reference, table: sys_user, mandatory: true}
+      - {name: last_working_day, question: Last working day, type: date, mandatory: true}
+      - {name: handover, question: Files or mailboxes to hand over, type: multi_line}
+
+  - name: Change of role or department
+    short_description: Move someone to a new department, job title or line manager, with the right access.
+    description: >-
+      On the effective date the person moves to the new department's OU and groups, and loses the
+      old department's access. The new line manager approves.
+    approval: new_line_manager
+    task: "Move {employee} to {new_department} on {effective_date}"
+    variables:
+      - {name: employee, question: "Who is moving?", type: reference, table: sys_user, mandatory: true}
+      - {name: new_department, question: New department, type: select, choices: departments, mandatory: true}
+      - {name: new_job_title, question: New job title, type: single_line}
+      - {name: new_line_manager, question: New line manager, type: reference, table: sys_user, mandatory: true}
+      - {name: effective_date, question: Effective date, type: date, mandatory: true}
+
+  - name: Shared drive access
+    short_description: Read or change access to a department's shared drive.
+    description: >-
+      The shared drive's data owner approves every request. Drives holding special category data
+      (adult social care, children and families, HR, legal) are only opened up for a clear business
+      reason. Access takes effect the next time the person signs in.
+    approval: data_owner
+    task: "Give {user} {access_level} access to the {share} drive"
+    variables:
+      - {name: user, question: "Who needs access?", type: reference, table: sys_user, mandatory: true}
+      - {name: share, question: Shared drive, type: select, choices: shares, mandatory: true}
+      - {name: access_level, question: Access, type: select, mandatory: true, default: read,
+         choices: [[read, Read only], [modify, Read and change]]}
+      - {name: business_reason, question: "Why do they need it?", type: multi_line, mandatory: true}

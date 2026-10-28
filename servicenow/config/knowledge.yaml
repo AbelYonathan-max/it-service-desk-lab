@@ -1,0 +1,16 @@
+# The service desk's knowledge base. Articles are the Markdown files in docs/kb; each starts with
+# a short header (title, category, keywords). `sdlab sn apply` publishes them.
+knowledge_base:
+  title: Kestrel IT Help
+  description: How-to guides, fixes and known errors from the council's IT service desk.
+  owner: E10030
+  managers: [E10031, E10035]
+categories:
+  - Accounts and passwords
+  - Devices and printing
+  - Microsoft 365 and Teams
+  - Network and remote working
+  - Security
+  - Starters, leavers and access
+  - Known errors
+articles: docs/kb

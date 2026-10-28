@@ -1,0 +1,81 @@
+# The council's service desk in ServiceNow: offices, teams, working hours and ticket categories.
+# Staff and departments come from lab/config (the same HR extract that builds Active Directory).
+# `sdlab sn plan` shows what would change on the instance; `sdlab sn apply` makes it so.
+
+# System property names start with this.
+property_prefix: kestrel.servicedesk
+
+locations:
+  - {name: Town Hall, street: 1 Market Square, city: Kestrel, zip: KB1 1AA, country: United Kingdom}
+  - {name: Civic Centre, street: 20 Castle Street, city: Kestrel, zip: KB1 2CC, country: United Kingdom}
+  - {name: Riverside Depot, street: Wharf Road, city: Kestrel, zip: KB4 7RD, country: United Kingdom}
+
+# Department heads are the people with no manager in their department (worked out from the HR extract).
+
+# Teams. People are employee IDs from lab/config/people.csv. Roles are given through the group, so
+# a person gains and loses them with team membership.
+groups:
+  - name: Service Desk
+    description: First line. Logs and triages every call, email and portal request, and resolves what it can at first contact.
+    manager: E10030
+    members: [E10030, E10031, E10035]
+    roles: [itil]
+  - name: Desktop Support
+    description: Second line for laptops, desktops, printers, phones and Windows.
+    manager: E10030
+    members: [E10032, E10036]
+    roles: [itil]
+  - name: Infrastructure
+    description: Servers, Active Directory, the network, Microsoft 365 and Azure.
+    manager: E10030
+    members: [E10033, E10037]
+    roles: [itil]
+  - name: Business Applications
+    description: Support for line-of-business systems (social care case management, revenues and benefits, planning, payroll).
+    manager: E10030
+    members: [E10034]
+    roles: [itil]
+  - name: Identity and Access
+    description: Accounts and permissions. Finishes by hand anything the fulfilment agent cannot.
+    manager: E10033
+    members: [E10031, E10035, E10033]
+    roles: [itil]
+  - name: Identity and Access Automation
+    description: The fulfilment agent on the domain controller DC01. Its only member is the agent's integration user.
+    manager: E10033
+    members: []
+  - name: Change Advisory Board
+    description: Reviews and authorises normal changes every Tuesday.
+    manager: E10030
+    members: [E10030, E10033, E10032, E10034]
+
+schedule:
+  name: Kestrel service desk hours
+  description: Monday to Friday, 08:00 to 18:00 UK time, closed on England and Wales bank holidays.
+  time_zone: Europe/London
+  days: [1, 2, 3, 4, 5] # Monday = 1
+  start: "08:00"
+  end: "18:00"
+  holidays: england-and-wales
+
+# Incident categories and subcategories (value: label). Values that ServiceNow already has keep their
+# value and get the council's label.
+categories:
+  hardware:
+    label: Hardware
+    subcategories: {laptop: Laptop or desktop, monitor: Monitor or docking station, printer: Printer or scanner, mobile: Mobile phone}
+  software:
+    label: Software
+    subcategories: {m365: Microsoft 365, business_app: Business application, os: Windows}
+  network:
+    label: Network
+    subcategories: {wireless: Wi-Fi, vpn: Remote access (VPN), internet: Internet}
+  access:
+    label: Account and access
+    subcategories: {password: Password reset, lockout: Account locked out, permissions: Permissions, mfa: Multi-factor authentication}
+  security:
+    label: Security
+    subcategories: {phishing: Phishing email, lost_device: Lost or stolen device, malware: Malware}
+  inquiry:
+    label: Inquiry / Help
+    subcategories: {how_to: How do I...}

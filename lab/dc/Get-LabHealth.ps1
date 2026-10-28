@@ -48,7 +48,9 @@ $tasks = @(Get-ScheduledTask -TaskPath '\ServiceDeskLab\' -ErrorAction SilentlyC
 if (-not $tasks.Count) { 'Not installed yet (stage 05).' }
 foreach ($task in $tasks) {
     $info = $task | Get-ScheduledTaskInfo
-    '{0}: {1}, last run {2:yyyy-MM-dd HH:mm} (result {3}), next {4:yyyy-MM-dd HH:mm}' -f $task.TaskName, $task.State, $info.LastRunTime, $info.LastTaskResult, $info.NextRunTime
+    # 0x41303 (267011) is Task Scheduler's "has not run yet"; its last run time is then a 1999 placeholder.
+    $last = if ($info.LastTaskResult -eq 267011) { 'not run yet' } else { 'last run {0:yyyy-MM-dd HH:mm} (result {1})' -f $info.LastRunTime, $info.LastTaskResult }
+    '{0}: {1}, {2}, next {3:yyyy-MM-dd HH:mm}' -f $task.TaskName, $task.State, $last, $info.NextRunTime
 }
 $log = Get-ChildItem 'C:\ProgramData\ServiceDeskLab\logs' -Filter 'fulfilment-*.log' -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1

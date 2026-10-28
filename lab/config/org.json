@@ -1,0 +1,79 @@
+{
+  "organisation": "Kestrel Borough Council",
+  "note": "Kestrel Borough Council is fictional. Every person in people.csv is made up.",
+  "domain": {
+    "dnsName": "corp.kestrel.internal",
+    "netbiosName": "KESTREL",
+    "rootOu": "Kestrel"
+  },
+  "naming": {
+    "maxSamAccountNameLength": 20
+  },
+  "ous": {
+    "staff": "Staff",
+    "leavers": "Leavers",
+    "groups": "Groups",
+    "departmentGroups": "Department",
+    "resourceGroups": "Resource",
+    "roleGroups": "Role",
+    "licenceGroups": "Licensing",
+    "devices": "Devices",
+    "workstations": "Workstations",
+    "servers": "Servers",
+    "serviceAccounts": "Service Accounts",
+    "admin": "Admin"
+  },
+  "groups": {
+    "allStaff": "GG-All-Staff",
+    "licence": "GG-LIC-M365-BusinessPremium",
+    "managers": "GG-Role-Managers",
+    "serviceDesk": "GG-Role-ServiceDesk",
+    "desktopSupport": "GG-Role-DesktopSupport",
+    "infrastructure": "GG-Role-Infrastructure",
+    "fulfilmentAgents": "GG-Role-FulfilmentAgents"
+  },
+  "departments": [
+    { "code": "CEX", "name": "Chief Executive's Office", "key": "ChiefExecutive", "share": "Corporate" },
+    { "code": "ASC", "name": "Adult Social Care", "key": "AdultSocialCare", "share": "AdultSocialCare" },
+    { "code": "CFS", "name": "Children and Families", "key": "ChildrenAndFamilies", "share": "ChildrenAndFamilies" },
+    { "code": "HSG", "name": "Housing", "key": "Housing", "share": "Housing" },
+    { "code": "FIN", "name": "Finance", "key": "Finance", "share": "Finance" },
+    { "code": "HR", "name": "HR and Payroll", "key": "HRPayroll", "share": "HR" },
+    { "code": "IT", "name": "IT and Digital", "key": "ITDigital", "share": "IT" },
+    { "code": "PLN", "name": "Planning", "key": "Planning", "share": "Planning" },
+    { "code": "ENV", "name": "Environment", "key": "Environment", "share": "Environment" },
+    { "code": "CS", "name": "Customer Services", "key": "CustomerServices", "share": "CustomerServices" },
+    { "code": "LGL", "name": "Legal and Democratic", "key": "LegalDemocratic", "share": "Legal" }
+  ],
+  "shares": [
+    { "name": "Corporate", "description": "Policies, templates and news for all staff", "readers": ["GG-All-Staff"], "editors": ["GG-Dept-ChiefExecutive"], "restricted": false, "ownerEmployeeId": "E10001" },
+    { "name": "AdultSocialCare", "description": "Care records and assessments (special category data)", "readers": [], "editors": ["GG-Dept-AdultSocialCare"], "restricted": true, "ownerEmployeeId": "E10002" },
+    { "name": "ChildrenAndFamilies", "description": "Case files (special category data)", "readers": [], "editors": ["GG-Dept-ChildrenAndFamilies"], "restricted": true, "ownerEmployeeId": "E10010" },
+    { "name": "Housing", "description": "Tenancy and lettings files", "readers": [], "editors": ["GG-Dept-Housing"], "restricted": false, "ownerEmployeeId": "E10015" },
+    { "name": "Finance", "description": "Budgets, payments and audit working papers", "readers": [], "editors": ["GG-Dept-Finance"], "restricted": false, "ownerEmployeeId": "E10020" },
+    { "name": "HR", "description": "Personnel files and payroll (special category data)", "readers": [], "editors": ["GG-Dept-HRPayroll"], "restricted": true, "ownerEmployeeId": "E10025" },
+    { "name": "IT", "description": "Runbooks, licences and asset records", "readers": [], "editors": ["GG-Dept-ITDigital"], "restricted": false, "ownerEmployeeId": "E10030" },
+    { "name": "Planning", "description": "Applications and consultation responses", "readers": [], "editors": ["GG-Dept-Planning"], "restricted": false, "ownerEmployeeId": "E10038" },
+    { "name": "Environment", "description": "Waste rounds, inspections and parks", "readers": [], "editors": ["GG-Dept-Environment"], "restricted": false, "ownerEmployeeId": "E10043" },
+    { "name": "CustomerServices", "description": "Scripts, call logs and FAQs", "readers": [], "editors": ["GG-Dept-CustomerServices"], "restricted": false, "ownerEmployeeId": "E10048" },
+    { "name": "Legal", "description": "Case files and committee papers", "readers": [], "editors": ["GG-Dept-LegalDemocratic"], "restricted": true, "ownerEmployeeId": "E10056" }
+  ],
+  "fileServer": {
+    "sharesRoot": "F:\\Shares",
+    "homeRoot": "F:\\Home",
+    "homeShareName": "Home$",
+    "homeDrive": "H:"
+  },
+  "leaverRetentionDays": 30,
+  "staleAccountDays": 90,
+  "serviceNow": {
+    "automationGroup": "Identity and Access Automation",
+    "fallbackGroup": "Identity and Access",
+    "catalogItems": {
+      "New starter": "Starter",
+      "Leaver": "Leaver",
+      "Change of role or department": "Mover",
+      "Shared drive access": "ShareAccess"
+    }
+  }
+}

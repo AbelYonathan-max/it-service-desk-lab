@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PESTER_VERSION: 5.7.1
+  SCRIPT_ANALYZER_VERSION: 1.24.0
+
+jobs:
+  powershell:
+    name: PowerShell 7 tests, coverage and ScriptAnalyzer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Pester and PSScriptAnalyzer
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -RequiredVersion $env:PESTER_VERSION -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module PSScriptAnalyzer -RequiredVersion $env:SCRIPT_ANALYZER_VERSION -Scope CurrentUser -Force
+
+      - name: ScriptAnalyzer (module and lab scripts)
+        run: |
+          Import-Module PSScriptAnalyzer -RequiredVersion $env:SCRIPT_ANALYZER_VERSION
+          $settings = Join-Path $PWD 'powershell/PSScriptAnalyzerSettings.psd1'
+          $findings = foreach ($path in 'powershell/ServiceDeskLab', 'lab') {
+              Invoke-ScriptAnalyzer -Path $path -Recurse -Settings $settings
+          }
+          foreach ($f in $findings) {
+              $file = Resolve-Path -Relative $f.ScriptPath
+              Write-Output "::error file=$file,line=$($f.Line)::$($f.RuleName): $($f.Message)"
+          }
+          $findings | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize -Wrap | Out-String -Width 300
+          if ($findings) { exit 1 }
+          Write-Output 'No findings.'
+
+      - name: Pester tests with code coverage
+        run: |
+          Import-Module Pester -RequiredVersion $env:PESTER_VERSION
+          $config = New-PesterConfiguration
+          $config.Run.Path = 'powershell/tests'
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputPath = 'out/pester-pwsh.xml'
+          $config.CodeCoverage.Enabled = $true
+          $config.CodeCoverage.Path = 'powershell/ServiceDeskLab'
+          $config.CodeCoverage.OutputPath = 'out/coverage.xml'
+          Invoke-Pester -Configuration $config
+
+      - name: Keep the test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pester-pwsh
+          path: out/
+          if-no-files-found: ignore
+
+  windows-powershell:
+    name: Windows PowerShell 5.1 tests (what the domain controller runs)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Pester
+        run: |
+          [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+          Install-Module Pester -RequiredVersion $env:PESTER_VERSION -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Pester tests
+        run: |
+          $PSVersionTable.PSVersion.ToString()
+          Import-Module Pester -RequiredVersion $env:PESTER_VERSION
+          $config = New-PesterConfiguration
+          $config.Run.Path = 'powershell/tests'
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputPath = 'out/pester-windows-powershell.xml'
+          Invoke-Pester -Configuration $config
+
+      - name: Keep the test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pester-windows-powershell
+          path: out/
+          if-no-files-found: ignore

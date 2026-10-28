@@ -105,7 +105,7 @@ jobs:
         env:
           DC_SIZES: ${{ vars.LAB_DC_SIZES }}
           WS_SIZES: ${{ vars.LAB_WS_SIZES }}
-          OTHER_REGIONS: ukwest northeurope westeurope swedencentral francecentral germanywestcentral norwayeast switzerlandnorth italynorth spaincentral
+          OTHER_REGIONS: ukwest francecentral northeurope westeurope swedencentral germanywestcentral norwayeast switzerlandnorth italynorth spaincentral
         run: |
           az vm list --resource-group "$LAB_RG" --show-details -o json > vms.json
           CURRENT=$(az resource list -g "$LAB_RG" --resource-type Microsoft.Network/virtualNetworks --query "[0].location" -o tsv)
@@ -113,6 +113,18 @@ jobs:
           REGION=""
           for region in $REGIONS; do
             echo "::group::$region"
+            # A whole region can be closed to new subscriptions ("not accepting new customers"), which
+            # the size list does not show, so a new lab first creates a free network security group
+            # there and deletes it again.
+            if [ -z "$CURRENT" ]; then
+              if ! az network nsg create -g "$LAB_RG" -n "nsg-region-check" -l "$region" -o none 2> probe.txt; then
+                echo "$region: skipped, Azure refused a test resource there:"
+                cat probe.txt
+                echo "::endgroup::"
+                continue
+              fi
+              az network nsg delete -g "$LAB_RG" -n "nsg-region-check" -o none || true
+            fi
             az vm list-skus --location "$region" --resource-type virtualMachines --all -o json > skus.json
             az vm list-usage --location "$region" -o json > usage.json
             if PYTHONPATH=src python3 -m servicedesk.lab_sizes --skus skus.json --usage usage.json --vms vms.json \
@@ -123,11 +135,11 @@ jobs:
             if [ -n "$REGION" ]; then break; fi
           done
           if [ -z "$REGION" ]; then
-            echo "::error::No region offers this subscription a VM size for the domain controller (details in the groups above). Upgrade the free trial to pay-as-you-go (the credit stays), then run deploy again."
+            echo "::error::No region takes this subscription's lab: each one is closed to it or has no VM size for the domain controller (details in the groups above). Upgrade the free trial to pay-as-you-go (the credit stays), then run deploy again."
             exit 1
           fi
           if [ "$REGION" != "$LOCATION" ] && [ -z "$CURRENT" ]; then
-            echo "::notice::$LOCATION has no VM size this subscription can use, so the lab goes in $REGION."
+            echo "::notice::$LOCATION is closed to this subscription or has no VM size it can use, so the lab goes in $REGION."
           fi
           { cat sizes.txt; echo "location=$REGION"; } >> "$GITHUB_OUTPUT"
 

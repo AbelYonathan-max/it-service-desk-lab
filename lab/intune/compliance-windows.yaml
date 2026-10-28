@@ -1,0 +1,30 @@
+# What a council PC must have before Intune counts it as compliant. With Conditional Access (not
+# turned on in the lab), a PC that fails would lose access to email, Teams and SharePoint.
+# Follows the Cyber Essentials controls for devices: a supported operating system, encryption, a
+# firewall and anti-malware. Graph: deviceManagement/deviceCompliancePolicies.
+kind: compliance
+name: KBC - Windows compliance
+description: >-
+  Council PCs: Windows 11 24H2 or later, BitLocker, Secure Boot, TPM, firewall and Microsoft
+  Defender on with current definitions. Managed in Git (lab/intune); changes made in the portal
+  are put back by the next apply.
+assign: all devices
+# Hours a PC may stay non-compliant before it is marked so: time for BitLocker to finish encrypting
+# and for the PC to restart and report it.
+grace_hours: 24
+properties:
+  "@odata.type": "#microsoft.graph.windows10CompliancePolicy"
+  # 26100 is Windows 11 24H2. 23H2 Enterprise leaves support on 10 November 2026.
+  osMinimumVersion: "10.0.26100"
+  bitLockerEnabled: true
+  secureBootEnabled: true
+  codeIntegrityEnabled: true
+  tpmRequired: true
+  activeFirewallRequired: true
+  defenderEnabled: true
+  rtpEnabled: true
+  antivirusRequired: true
+  antiSpywareRequired: true
+  signatureOutOfDate: true # true means the definitions must be up to date
+  # Staff sign in with their council account and Windows Hello, not a separate device password.
+  passwordRequired: false

@@ -1,0 +1,45 @@
+# BitLocker: encrypts each PC's system drive without asking the user, so a lost or stolen laptop
+# gives nothing away (UK GDPR: personal data must be protected). The recovery key is saved in
+# Entra ID before encryption starts, so the service desk can unlock a PC that asks for it.
+# Settings catalog (BitLocker CSP). Graph: deviceManagement/configurationPolicies.
+kind: settings
+name: KBC - BitLocker
+description: >-
+  Silent BitLocker on the system drive with XTS-AES 256; recovery key kept in Entra ID before
+  encryption starts. Managed in Git (lab/intune).
+assign: all devices
+settings:
+  - id: device_vendor_msft_bitlocker_requiredeviceencryption
+    choice: 1
+  # Silent: no prompt about other encryption software, and standard users' PCs are encrypted too.
+  - id: device_vendor_msft_bitlocker_allowwarningforotherdiskencryption
+    choice: 0
+    children:
+      - id: device_vendor_msft_bitlocker_allowstandarduserencryption
+        choice: 1
+  - id: device_vendor_msft_bitlocker_encryptionmethodbydrivetype
+    choice: 1
+    children:
+      - id: device_vendor_msft_bitlocker_encryptionmethodbydrivetype_encryptionmethodwithxtsosdropdown_name
+        choice: 7 # XTS-AES 256 for the system drive
+      - id: device_vendor_msft_bitlocker_encryptionmethodbydrivetype_encryptionmethodwithxtsfdvdropdown_name
+        choice: 7 # XTS-AES 256 for other fixed drives
+      - id: device_vendor_msft_bitlocker_encryptionmethodbydrivetype_encryptionmethodwithxtsrdvdropdown_name
+        choice: 4 # AES-CBC 256 for USB drives, so older PCs can still read them
+  - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions
+    choice: 1
+    children:
+      - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_osallowdra
+        choice: "false"
+      - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_osrecoverypasswordusagedropdown_name
+        choice: 2 # allow a 48-digit recovery password
+      - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_osrecoverykeyusagedropdown_name
+        choice: 2 # allow a 256-bit recovery key
+      - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_oshiderecoverypage
+        choice: "true" # users are not asked to save a key themselves
+      - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_osactivedirectorybackup
+        choice: "true" # for an Entra-joined PC, this means Entra ID
+      - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_osactivedirectorybackupdropdown_name
+        choice: 1 # recovery passwords and key packages
+      - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_osrequireactivedirectorybackup
+        choice: "true" # no encryption until the key is safely stored

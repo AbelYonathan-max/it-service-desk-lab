@@ -1,0 +1,27 @@
+# Everyday security settings for council PCs: lock after 15 minutes idle, an
+# acceptable-use notice at sign-in, no consumer apps or adverts pushed by Windows, no copying files
+# to USB drives (data protection), and SmartScreen warnings that users cannot click past.
+# Settings catalog (Policy CSP). Graph: deviceManagement/configurationPolicies.
+kind: settings
+name: KBC - Device security
+description: >-
+  Screen lock after 15 minutes, sign-in notice, no consumer features, USB drives read-only,
+  SmartScreen enforced. Managed in Git (lab/intune).
+assign: all devices
+settings:
+  - id: device_vendor_msft_policy_config_localpoliciessecurityoptions_interactivelogon_machineinactivitylimit
+    integer: 900 # seconds
+  - id: device_vendor_msft_policy_config_localpoliciessecurityoptions_interactivelogon_messagetitleforusersattemptingtologon
+    string: Kestrel Borough Council
+  - id: device_vendor_msft_policy_config_localpoliciessecurityoptions_interactivelogon_messagetextforusersattemptingtologon
+    string: >-
+      This computer is for authorised council business. Use is monitored in line with the council's
+      acceptable use policy. Report anything suspicious to the IT Service Desk.
+  - id: device_vendor_msft_policy_config_experience_allowwindowsconsumerfeatures
+    choice: 0
+  - id: device_vendor_msft_policy_config_storage_removablediskdenywriteaccess
+    choice: 1
+  - id: device_vendor_msft_policy_config_smartscreen_enablesmartscreeninshell
+    choice: 1
+  - id: device_vendor_msft_policy_config_smartscreen_preventoverrideforfilesinshell
+    choice: 1

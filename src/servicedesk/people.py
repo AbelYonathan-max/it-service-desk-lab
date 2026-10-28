@@ -89,6 +89,7 @@ class Organisation:
     shares: list[Share]
     people: list[Person]
     service_now: dict[str, Any] = field(default_factory=dict)
+    groups: dict[str, str] = field(default_factory=dict)  # role names to AD group names, from org.json
 
     def person(self, employee_id: str) -> Person:
         for person in self.people:
@@ -150,4 +151,5 @@ def load_organisation(config_dir: Path | None = None) -> Organisation:
         shares=shares,
         people=load_people(directory / "people.csv"),
         service_now=dict(raw.get("serviceNow", {})),
+        groups=dict(raw.get("groups", {})),
     )

@@ -1,0 +1,69 @@
+name: Entra and Intune
+
+# Microsoft 365 side of the lab, through Microsoft Graph. Run it from the Actions tab
+# (Entra and Intune > Run workflow):
+#   plan     what apply would change in Intune and licensing, without changing anything
+#   apply    create or put back the Intune policies in lab/intune and assign them to all PCs, and give
+#            the licence group synced from AD Microsoft 365 Business Premium
+#   status   staff synced from AD, licences in use, enrolled PCs and how the policies are doing
+# It signs in like the Lab workflow (OpenID Connect, no stored secret) and gets a Graph token for
+# the deploy identity, which the set-up script gave the Intune and licensing permissions it needs.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do
+        type: choice
+        options: [plan, apply, status]
+        default: plan
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: entra
+  cancel-in-progress: false
+
+jobs:
+  m365:
+    name: ${{ inputs.action }}
+    # Skipped until the bootstrap script has run and set the repository variables.
+    if: vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: lab
+    env:
+      ACTION: ${{ inputs.action }}
+      ENTRA_READY: ${{ vars.ENTRA_READY }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check the set-up
+        run: |
+          if [ "$ENTRA_READY" != true ]; then
+            echo "::error::Microsoft 365 is not set up yet. Start the Business Premium trial (docs/setup.md, step 3), then run the set-up command again."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: python -m pip install --quiet -e .
+
+      - name: Sign in to Azure (OIDC, no stored secret)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run
+        run: sdlab m365 "$ACTION"

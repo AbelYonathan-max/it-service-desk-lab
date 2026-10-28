@@ -1,0 +1,24 @@
+# Windows LAPS: every PC's local administrator account gets its own random password, changed every
+# 30 days and again 8 hours after anyone uses it. The password is kept in Entra ID, where the desktop
+# support team can read it (and every read is audited). No shared admin password across the estate.
+# Settings catalog (LAPS CSP). Graph: deviceManagement/configurationPolicies.
+kind: settings
+name: KBC - Windows LAPS
+description: >-
+  Local administrator password per PC: 20 characters, rotated every 30 days and 8 hours after use,
+  backed up to Entra ID. Managed in Git (lab/intune).
+assign: all devices
+settings:
+  - id: device_vendor_msft_laps_policies_backupdirectory
+    choice: 1 # Entra ID
+    children:
+      - id: device_vendor_msft_laps_policies_passwordagedays_aad
+        integer: 30
+  - id: device_vendor_msft_laps_policies_passwordcomplexity
+    choice: 4 # upper and lower case, numbers and symbols
+  - id: device_vendor_msft_laps_policies_passwordlength
+    integer: 20
+  - id: device_vendor_msft_laps_policies_postauthenticationactions
+    choice: 3 # reset the password and sign the admin out
+  - id: device_vendor_msft_laps_policies_postauthenticationresetdelay
+    integer: 8

@@ -61,6 +61,8 @@ agent has to be registered by a person signing in interactively (with MFA), so t
 1. Azure portal > **vm-dc01** > **Connect** > **Bastion**. Sign in as `sdlab.admin`; the password is
    in the lab Key Vault (`kv-sdlab-…`) > **Secrets** > `dc01-admin-password`.
 2. Follow the note **Connect to Microsoft Entra ID** on the desktop.
+3. In GitHub: **Actions** > **Entra and Intune** > **Run workflow** > action `apply` > **Run workflow**.
+   It licenses the staff who need Microsoft 365 and applies the Intune policies to the Windows 11 PC.
 
 ## What it costs
 

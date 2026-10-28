@@ -7,9 +7,13 @@
     sdlab sn smoke-test            prove the whole process works on the instance
     sdlab sn connect-lab VAULT     create the fulfilment agent's integration user, store it in Key Vault
     sdlab report MONTH             the monthly SLA report as an Excel workbook
+    sdlab m365 plan                what `apply` would change in Intune and licensing
+    sdlab m365 apply               Intune policies from lab/intune, licence for the licence group
+    sdlab m365 status              staff synced, licences, PCs and policy results
 
 ServiceNow commands read SERVICENOW_INSTANCE, SERVICENOW_USERNAME (default admin) and
-SERVICENOW_PASSWORD from the environment.
+SERVICENOW_PASSWORD from the environment. Microsoft 365 commands use the Azure CLI's sign-in (or
+GRAPH_TOKEN).
 """
 
 from __future__ import annotations
@@ -20,6 +24,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from servicedesk.graph import GraphError
+from servicedesk.intune import IntuneError
 from servicedesk.snow import Connection, InstanceAsleepError, ServiceNow, ServiceNowError
 
 
@@ -130,6 +136,46 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_m365(args: argparse.Namespace) -> int:
+    from servicedesk.entra import license_group, tenant_status
+    from servicedesk.graph import Graph, token_from_azure_cli
+    from servicedesk.intune import Intune, load_policies
+    from servicedesk.people import load_organisation
+
+    policies = load_policies()
+    group = load_organisation().groups["licence"]
+    with Graph(token_from_azure_cli()) as graph:
+        if args.command == "status":
+            lines = tenant_status(graph, group, policies)
+            print("\n".join(lines))
+            _summary(lines)
+            return 0
+        apply = args.command == "apply"
+        intune = Intune(graph, progress=lambda text: print(f"-- {text}", flush=True))
+        result = intune.run(policies, apply=apply)
+        licensing = license_group(graph, group, apply=apply)
+    for change in result.changes:
+        print(change)
+    print(f"Licensing: {licensing.message}")
+    verb = "would change" if not apply else "changed"
+    line = f"Intune: {len(result.changed)} {verb}, {len(result.changes) - len(result.changed)} already right."
+    print(line)
+    _summary(
+        [
+            f"### Entra and Intune {args.command}",
+            "",
+            line,
+            "",
+            "```",
+            *[str(c) for c in result.changes],
+            "```",
+            "",
+            f"Licensing: {licensing.message}",
+        ]
+    )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sdlab", description="IT service desk lab tooling.")
     top = parser.add_subparsers(dest="area", required=True)
@@ -165,13 +211,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     report.add_argument("--seed", type=int, help="with --sample: another made-up history")
     report.set_defaults(func=cmd_report)
 
+    m365 = top.add_parser("m365", help="Intune policies and Microsoft 365 licensing").add_subparsers(
+        dest="command", required=True
+    )
+    m365.add_parser("plan", help="show what apply would change").set_defaults(func=cmd_m365)
+    m365.add_parser("apply", help="apply lab/intune and the group licence").set_defaults(func=cmd_m365)
+    m365.add_parser("status", help="staff synced, licences, PCs and policy results").set_defaults(
+        func=cmd_m365
+    )
+
     args = parser.parse_args(argv)
     try:
         return int(args.func(args))
     except InstanceAsleepError as error:
         print(f"::warning::{error}" if os.environ.get("GITHUB_ACTIONS") else error, file=sys.stderr)
         return 3
-    except ServiceNowError as error:
+    except (ServiceNowError, GraphError, IntuneError) as error:
         print(f"::error::{error}" if os.environ.get("GITHUB_ACTIONS") else error, file=sys.stderr)
         return 2
 

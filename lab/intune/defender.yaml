@@ -1,0 +1,33 @@
+# Microsoft Defender Antivirus, turned fully on and locked so users cannot weaken it: real-time and
+# behaviour monitoring, cloud protection at the high blocking level, potentially unwanted apps
+# blocked, and network protection blocking known malicious sites.
+# Settings catalog (Defender policy CSP). Graph: deviceManagement/configurationPolicies.
+kind: settings
+name: KBC - Microsoft Defender Antivirus
+description: >-
+  Real-time, behaviour and cloud protection on; unwanted apps and malicious sites blocked.
+  Managed in Git (lab/intune).
+assign: all devices
+settings:
+  - id: device_vendor_msft_policy_config_defender_allowrealtimemonitoring
+    choice: 1
+  - id: device_vendor_msft_policy_config_defender_allowbehaviormonitoring
+    choice: 1
+  - id: device_vendor_msft_policy_config_defender_allowioavprotection
+    choice: 1 # scan downloads and attachments
+  - id: device_vendor_msft_policy_config_defender_allowscriptscanning
+    choice: 1
+  - id: device_vendor_msft_policy_config_defender_allowarchivescanning
+    choice: 1
+  - id: device_vendor_msft_policy_config_defender_allowemailscanning
+    choice: 1
+  - id: device_vendor_msft_policy_config_defender_allowcloudprotection
+    choice: 1
+  - id: device_vendor_msft_policy_config_defender_cloudblocklevel
+    choice: 2 # high
+  - id: device_vendor_msft_policy_config_defender_submitsamplesconsent
+    choice: 1 # send safe samples automatically
+  - id: device_vendor_msft_policy_config_defender_puaprotection
+    choice: 1 # block potentially unwanted apps
+  - id: device_vendor_msft_policy_config_defender_enablenetworkprotection
+    choice: 1 # block

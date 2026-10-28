@@ -46,13 +46,15 @@ Secrets). Copy and paste work in Bastion.
    - Confirm. The agent shows as Active in the portal within a minute or two.
 4. Back in the portal: Cloud sync > Configurations > New configuration > AD to Microsoft Entra ID
    sync > choose $($domain.DNSRoot) > Create.
-   - Scoping filters > Selected organizational units > add:
+   - Scoping filters > Selected organizational units > add both:
        $($config.Ou.Staff)
-     (Leavers and admin accounts stay out of the cloud.)
+       $($config.Ou.LicenceGroups)
+     (The second brings the licence group. Leavers and admin accounts stay out of the cloud.)
    - Password hash sync stays on.
    - Overview > Enable configuration > Save.
 5. Users appear in Entra ID within about 2 to 5 minutes, with the same passwords they use in AD.
-   Then run the "Entra and Intune" workflow in GitHub to licence them and apply the Intune policies.
+   Then run the "Entra and Intune" workflow in GitHub with "apply": it gives the licence group
+   Microsoft 365 Business Premium (group-based licensing) and checks the Intune policies.
 
 Run the GitHub "Lab" workflow with action "doctor" to check the agent from here.
 "@

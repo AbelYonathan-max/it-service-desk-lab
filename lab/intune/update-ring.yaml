@@ -1,0 +1,34 @@
+# Windows Update for Business: when PCs install Microsoft's updates and how hard they are pushed.
+# Security updates are deferred 3 days (time to hear of a bad patch), then must be installed within
+# 2 more days plus 2 days' grace: at most a week after release. Cyber Essentials allows 14 days for
+# high and critical fixes. Feature updates (the yearly Windows release) wait 60 days.
+# Graph: deviceManagement/deviceConfigurations, #microsoft.graph.windowsUpdateForBusinessConfiguration.
+kind: update-ring
+name: KBC - Windows Update ring
+description: >-
+  All council PCs: security updates within 7 days of release, feature updates after 60 days,
+  restarts outside 08:00-18:00. Managed in Git (lab/intune).
+assign: all devices
+properties:
+  "@odata.type": "#microsoft.graph.windowsUpdateForBusinessConfiguration"
+  businessReadyUpdatesOnly: all # the General Availability channel
+  microsoftUpdateServiceAllowed: true # updates for Office and other Microsoft products too
+  driversExcluded: false
+  qualityUpdatesDeferralPeriodInDays: 3
+  featureUpdatesDeferralPeriodInDays: 60
+  qualityUpdatesPaused: false
+  featureUpdatesPaused: false
+  featureUpdatesRollbackWindowInDays: 10
+  automaticUpdateMode: autoInstallAtMaintenanceTime
+  installationSchedule:
+    "@odata.type": "#microsoft.graph.windowsUpdateActiveHoursInstall"
+    activeHoursStart: "08:00:00.0000000"
+    activeHoursEnd: "18:00:00.0000000"
+  deadlineForQualityUpdatesInDays: 2
+  deadlineForFeatureUpdatesInDays: 7
+  deadlineGracePeriodInDays: 2
+  postponeRebootUntilAfterDeadline: false
+  skipChecksBeforeRestart: false
+  userPauseAccess: disabled # staff cannot pause updates
+  userWindowsUpdateScanAccess: enabled
+  updateNotificationLevel: defaultNotifications

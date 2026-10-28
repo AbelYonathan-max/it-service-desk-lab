@@ -127,4 +127,10 @@ resource "azurerm_bastion_host" "lab" {
   sku                 = "Developer"
   virtual_network_id  = azurerm_virtual_network.lab.id
   tags                = local.tags
+
+  # Azure refuses Bastion while the network is still being updated, so it waits for the subnets.
+  depends_on = [
+    azurerm_subnet_network_security_group_association.servers,
+    azurerm_subnet_network_security_group_association.clients,
+  ]
 }

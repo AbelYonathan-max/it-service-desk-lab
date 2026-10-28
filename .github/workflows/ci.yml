@@ -173,6 +173,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: shellcheck infra/bootstrap/*.sh infra/scripts/*.sh
+      # ServiceNow runs global-scope server scripts as ES5, so newer syntax would fail only on the instance.
+      - name: ServiceNow scripts parse as ES5
+        run: for f in servicenow/scripts/*.js; do npx --yes acorn@8.14.0 --ecma5 --silent "$f" || exit 1; done
       - name: actionlint (checks the shell inside workflows too)
         run: |
           python -m pip install --quiet actionlint-py

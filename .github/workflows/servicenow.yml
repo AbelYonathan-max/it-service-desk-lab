@@ -1,0 +1,131 @@
+name: ServiceNow
+
+# Configures and uses the ServiceNow developer instance. Run it from the Actions tab
+# (ServiceNow > Run workflow):
+#   check        can GitHub reach the instance, and which release is it?
+#   plan         what apply would change, without changing anything
+#   apply        make the instance match servicenow/config (safe to run again at any time)
+#   history      load the simulated history, July to October 2026 (tickets already there are skipped)
+#   smoke-test   log test tickets and check routing, SLAs, approvals and the automated request
+#   connect-lab  create the fulfilment agent's integration user and put its password in the lab's Key Vault
+#   report       the monthly SLA report in Excel, kept with the run (Summary > Artifacts)
+# A developer instance sleeps when nobody uses it. The run then stops and says so: wake the instance
+# by signing in at developer.servicenow.com, wait a few minutes and run it again.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do
+        type: choice
+        options: [check, plan, apply, history, smoke-test, connect-lab, report]
+        default: plan
+      month:
+        description: With report, the month as YYYY-MM (empty means last month)
+        type: string
+        default: ""
+      sample:
+        description: With report, use the simulated history instead of the instance
+        type: boolean
+        default: false
+      wait_for_agent:
+        description: With smoke-test, also wait for the lab's agent to close the task (the lab must be running)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: servicenow
+  cancel-in-progress: false
+
+jobs:
+  servicenow:
+    name: ${{ inputs.action }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: lab
+    env:
+      ACTION: ${{ inputs.action }}
+      MONTH: ${{ inputs.month }}
+      SAMPLE: ${{ inputs.sample }}
+      WAIT_FOR_AGENT: ${{ inputs.wait_for_agent }}
+      SERVICENOW_INSTANCE: ${{ secrets.SERVICENOW_INSTANCE }}
+      SERVICENOW_PASSWORD: ${{ secrets.SERVICENOW_ADMIN_PASSWORD }}
+      # Users' e-mail addresses use the tenant's domain, a secret only so it is masked in these public logs.
+      SDLAB_EMAIL_DOMAIN: ${{ secrets.ENTRA_DOMAIN }}
+      LAB_RG: ${{ vars.LAB_RESOURCE_GROUP }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check the set-up
+        run: |
+          if [ "$ACTION" = report ] && [ "$SAMPLE" = true ]; then exit 0; fi
+          if [ -z "$SERVICENOW_INSTANCE" ] || [ -z "$SERVICENOW_PASSWORD" ]; then
+            echo "::error::No ServiceNow instance yet. Run the set-up command again (docs/setup.md, step 2) and give it the instance name and admin password."
+            exit 1
+          fi
+          if [ "$ACTION" = connect-lab ] && { [ -z "$AZURE_CLIENT_ID" ] || [ -z "$LAB_RG" ]; }; then
+            echo "::error::connect-lab needs the Azure lab: run the set-up command (docs/setup.md, step 2) and the Lab workflow first."
+            exit 1
+          fi
+          echo "Ready for $ACTION."
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: python -m pip install --quiet -e .
+
+      - name: Sign in to Azure (OIDC, no stored secret)
+        if: inputs.action == 'connect-lab'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Find the lab's Key Vault
+        if: inputs.action == 'connect-lab'
+        run: |
+          KEY_VAULT=$(az keyvault list -g "$LAB_RG" --query "[0].name" -o tsv)
+          if [ -z "$KEY_VAULT" ]; then echo "::error::There is no lab Key Vault yet: run the Lab workflow with deploy."; exit 1; fi
+          echo "KEY_VAULT=$KEY_VAULT" >> "$GITHUB_ENV"
+
+      - name: Run
+        run: |
+          case "$ACTION" in
+            smoke-test) ARGS=(sn smoke-test); if [ "$WAIT_FOR_AGENT" = true ]; then ARGS+=(--wait-for-agent); fi ;;
+            connect-lab) ARGS=(sn connect-lab "$KEY_VAULT") ;;
+            report)
+              # Last month by UK time, unless a month was given.
+              if [ -z "$MONTH" ]; then MONTH=$(TZ=Europe/London date -d "$(TZ=Europe/London date +%Y-%m-01) -1 day" +%Y-%m); fi
+              ARGS=(report "$MONTH" --out "out/sla-report-$MONTH.xlsx")
+              if [ "$SAMPLE" = true ]; then ARGS+=(--sample); fi ;;
+            *) ARGS=(sn "$ACTION") ;;
+          esac
+          status=0
+          sdlab "${ARGS[@]}" || status=$?
+          if [ "$status" -eq 3 ]; then
+            { echo "### The ServiceNow instance is asleep"; echo
+              echo "Sign in at https://developer.servicenow.com to wake it, wait a few minutes, then run this again."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+
+      - name: Keep the report
+        if: inputs.action == 'report' && success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sla-report
+          path: out/sla-report-*.xlsx
+          if-no-files-found: error
+          retention-days: 90

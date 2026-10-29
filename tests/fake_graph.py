@@ -116,7 +116,10 @@ class FakeGraph:
                     "pendingCount": 0,
                     "notApplicableCount": 0,
                 }
-            return {k: copy.deepcopy(v) for k, v in record.items() if not k.startswith("_")}
+            found = {k: copy.deepcopy(v) for k, v in record.items() if not k.startswith("_")}
+            if "scheduledActionsForRule" in (params or {}).get("$expand", ""):
+                found["scheduledActionsForRule"] = copy.deepcopy(record["_rules"])
+            return found
         raise self._missing(path)
 
     def get_all(
@@ -139,7 +142,8 @@ class FakeGraph:
             if part == "assignments":
                 return copy.deepcopy(record["_assignments"])
             if part == "scheduledActionsForRule":
-                return copy.deepcopy(record["_rules"])
+                # As in the real Graph, which only returns the rules expanded with their policy.
+                raise GraphError(f"GET {path} answered 400 No method match route template", 400, "BadRequest")
         if path == DM + "managedDevices":
             return copy.deepcopy(self.devices)
         if path == "/v1.0/subscribedSkus":

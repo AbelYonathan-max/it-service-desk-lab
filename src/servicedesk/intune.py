@@ -429,9 +429,11 @@ class Intune:
         return changes or [Change(policy.name, "same")]
 
     def _grace_period(self, policy: Policy, url: str, apply: bool) -> list[Change]:
-        rules = self.graph.get_all(
-            f"{url}/scheduledActionsForRule", {"$expand": "scheduledActionConfigurations"}
+        # Graph has no route to the rules on their own: they only come expanded with the policy.
+        expanded = self.graph.get(
+            url, {"$expand": "scheduledActionsForRule($expand=scheduledActionConfigurations)"}
         )
+        rules = expanded.get("scheduledActionsForRule") or []
         blocks = [
             a.get("gracePeriodHours")
             for rule in rules

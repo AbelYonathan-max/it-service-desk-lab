@@ -74,6 +74,7 @@ class FakeGraph:
         self.members: dict[str, list[dict[str, Any]]] = {}
         self.users: list[dict[str, Any]] = []
         self.devices: list[dict[str, Any]] = []
+        self.encryption_states: list[dict[str, Any]] = []
         self.writes: list[tuple[str, str, Any]] = []
         self._next = 0
 
@@ -146,6 +147,8 @@ class FakeGraph:
                 raise GraphError(f"GET {path} answered 400 No method match route template", 400, "BadRequest")
         if path == DM + "managedDevices":
             return copy.deepcopy(self.devices)
+        if path == DM + "managedDeviceEncryptionStates":
+            return copy.deepcopy(self.encryption_states)
         if path == "/v1.0/subscribedSkus":
             return copy.deepcopy(self.skus)
         if path == "/v1.0/groups":

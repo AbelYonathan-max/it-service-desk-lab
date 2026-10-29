@@ -47,8 +47,21 @@ if (-not $volume -or $volume.VolumeStatus -ne 'FullyEncrypted') {
     if ($tpm) { 'TPM: present {0}, ready {1}' -f $tpm.TpmPresent, $tpm.TpmReady }
     $winre = @(& reagentc.exe /info 2>&1) | Where-Object { "$_" -match 'Windows RE status' } | Select-Object -First 1
     if ($winre) { "$winre".Trim() }
-    $logged = @(Get-WinEvent -LogName 'Microsoft-Windows-BitLocker/BitLocker Management' -MaxEvents 6 -ErrorAction SilentlyContinue)
-    if (-not $logged.Count) { 'BitLocker log: nothing yet.' }
+    $received = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\BitLocker' -ErrorAction SilentlyContinue
+    if ($received) {
+        # Run Command keeps only the last 4 KB of output, so long values are cut short.
+        $values = foreach ($property in $received.PSObject.Properties) {
+            if ($property.Name -like 'PS*' -or $property.Name -like '*_ProviderSet' -or $property.Name -like '*_WinningProvider') { continue }
+            $value = "$($property.Value)" -replace '\s+', ' '
+            '{0}={1}' -f $property.Name, $value.Substring(0, [Math]::Min(60, $value.Length))
+        }
+        'BitLocker settings from Intune: {0}' -f ($values -join '; ')
+    }
+    $tasks = Get-ScheduledTask -TaskPath '\Microsoft\Windows\BitLocker\' -ErrorAction SilentlyContinue | Get-ScheduledTaskInfo
+    foreach ($task in $tasks) { '{0}: last run {1:yyyy-MM-dd HH:mm}, result 0x{2:x}' -f $task.TaskName, $task.LastRunTime, $task.LastTaskResult }
+    # Event 881, a note about the boot manager's signature logged at every check, is left out.
+    $logged = @(Get-WinEvent -LogName 'Microsoft-Windows-BitLocker/BitLocker Management' -FilterXPath '*[System[EventID!=881]]' -MaxEvents 6 -ErrorAction SilentlyContinue)
+    if (-not $logged.Count) { 'BitLocker log: nothing apart from event 881.' }
     foreach ($entry in $logged) {
         '{0:yyyy-MM-dd HH:mm} {1} {2}: {3}' -f $entry.TimeCreated, $entry.LevelDisplayName, $entry.Id, ($entry.Message -split "`n")[0].Trim()
     }

@@ -120,6 +120,21 @@ def tenant_status(graph: Graph, group_name: str, policies: list[Policy]) -> list
         )
     if not devices:
         lines.append("| none enrolled yet | | | | |")
+    # For a PC that is not encrypted yet, Intune's encryption report says why, from BitLocker's own status.
+    try:
+        states = graph.get_all("/beta/deviceManagement/managedDeviceEncryptionStates")
+    except GraphError as error:
+        states = []
+        lines += ["", f"- Encryption report not readable ({error.code or error.status})."]
+    waiting = [s for s in states if s.get("encryptionState") != "encrypted"]
+    if waiting:
+        lines.append("")
+    for state in sorted(waiting, key=lambda s: str(s.get("deviceName"))):
+        lines.append(
+            f"- {state.get('deviceName')} not encrypted yet: readiness {state.get('encryptionReadinessState')}, "
+            f"BitLocker policy {state.get('encryptionPolicySettingState')}, "
+            f"BitLocker reports: {state.get('advancedBitLockerStates') or 'nothing'}."
+        )
 
     lines += [
         "",

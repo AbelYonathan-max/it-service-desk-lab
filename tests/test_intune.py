@@ -351,11 +351,31 @@ def test_status_counts_without_names(policies: list[Policy]) -> None:
             "lastSyncDateTime": "2026-10-28T21:00:00Z",
         }
     ]
+    fake.encryption_states = [{"deviceName": "WS01", "encryptionState": "encrypted"}]
     text = "\n".join(tenant_status(cast(Graph, fake), LICENCE_GROUP, policies))
     assert "Staff accounts synced from AD: 2, of whom 1 hold a licence." in text
     assert "| WS01 | 10.0.26200.6899 | compliant | yes | 2026-10-28T21:00 |" in text
     assert "| KBC - Windows compliance | 1 | 0 | 0 | 0 |" in text
+    assert "not encrypted yet" not in text
     assert "@" not in text
+
+
+def test_status_says_why_a_pc_is_not_encrypted(policies: list[Policy]) -> None:
+    fake = licensed_tenant(policies)
+    fake.encryption_states = [
+        {
+            "deviceName": "WS01",
+            "encryptionState": "notEncrypted",
+            "encryptionReadinessState": "ready",
+            "encryptionPolicySettingState": "error",
+            "advancedBitLockerStates": "osVolumeUnprotected,recoveryKeyBackupFailed",
+        }
+    ]
+    text = "\n".join(tenant_status(cast(Graph, fake), LICENCE_GROUP, policies))
+    assert (
+        "- WS01 not encrypted yet: readiness ready, BitLocker policy error, "
+        "BitLocker reports: osVolumeUnprotected,recoveryKeyBackupFailed." in text
+    )
 
 
 # -- the Graph client itself -------------------------------------------------------------------------------

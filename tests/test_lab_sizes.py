@@ -33,11 +33,12 @@ def sku(
     }
 
 
-def usage(cores_free=4, **families):
-    rows = [{"name": {"value": "cores"}, "limit": cores_free, "currentValue": 0}]
-    rows += [
-        {"name": {"value": family}, "limit": limit, "currentValue": 0} for family, limit in families.items()
-    ]
+def usage(cores=4, used=0, **families):
+    """Quota rows: the regional limit and use, then each family's limit or (limit, use)."""
+    rows = [{"name": {"value": "cores"}, "limit": cores, "currentValue": used}]
+    for family, quota in families.items():
+        limit, current = quota if isinstance(quota, tuple) else (quota, 0)
+        rows.append({"name": {"value": family}, "limit": limit, "currentValue": current})
     return rows
 
 
@@ -94,13 +95,13 @@ def test_no_quota_at_all_means_no_domain_controller_here():
     assert choice.notes[-1] == "No size here fits the domain controller."
 
 
-def test_existing_vms_keep_their_size_and_a_deallocated_one_needs_its_cores_back():
+def test_existing_vms_keep_their_size_and_are_in_the_usage_even_when_deallocated():
     existing = {"vm-dc01": {"size": "Standard_D2as_v5", "power_state": "VM deallocated"}}
-    choice = choose(parse_skus(CATALOGUE, "uksouth"), parse_free_quota(usage(4)), existing)
+    choice = choose(parse_skus(CATALOGUE, "uksouth"), parse_free_quota(usage(4, used=2)), existing)
     assert choice.dc_size == "Standard_D2as_v5"
     assert choice.ws_size == "Standard_B2s"
 
-    tight = choose(parse_skus(CATALOGUE, "uksouth"), parse_free_quota(usage(2)), existing)
+    tight = choose(parse_skus(CATALOGUE, "uksouth"), parse_free_quota(usage(2, used=2)), existing)
     assert tight.dc_size == "Standard_D2as_v5" and tight.ws_size is None
 
 
@@ -173,18 +174,24 @@ def test_a_region_closed_to_the_subscription_fails_so_the_next_one_is_tried(tmp_
     assert "No size here fits the domain controller." in capsys.readouterr().err
 
 
-# What the lab met in Sweden Central: no room for Standard_B2als_v2, which has no temporary disk.
+# What the lab met in Sweden Central: no room for Standard_B2als_v2, which has no temporary disk. Both
+# VMs are deallocated, and Azure still counts their cores in the usage.
 SWEDEN = [
     sku("Standard_B2s", "standardBSFamily", temp_mb=8192),
     sku("Standard_B2als_v2", "standardBasv2Family"),
     sku("Standard_B2as_v2", "standardBasv2Family", memory=8),
     sku("Standard_B2ls_v2", "standardBsv2Family"),
     sku("Standard_B2ms", "standardBSFamily", memory=8, temp_mb=16384),
+    sku("Standard_D2s_v5", "standardDSv5Family", memory=8),
 ]
 BOTH_STOPPED = {
     "vm-dc01": {"size": "Standard_B2als_v2", "power_state": "VM deallocated"},
     "vm-ws01": {"size": "Standard_B2als_v2", "power_state": "VM deallocated"},
 }
+
+
+def sweden_usage(**families):
+    return parse_free_quota(usage(4, used=4, standardBasv2Family=(4, 4), **families))
 
 
 def test_temporary_disk_comes_from_max_resource_volume():
@@ -194,43 +201,40 @@ def test_temporary_disk_comes_from_max_resource_volume():
     assert not parse_skus([without], "swedencentral")["Standard_X2"].temp_disk
 
 
-def test_replacement_skips_its_own_size_and_sizes_with_a_temporary_disk():
-    size, notes = choose_replacement(
-        parse_skus(SWEDEN, "swedencentral"), parse_free_quota(usage(4)), BOTH_STOPPED, "vm-dc01", set()
-    )
+def test_replacement_uses_the_vms_own_cores_and_skips_sizes_with_a_temporary_disk():
+    skus = parse_skus(SWEDEN, "swedencentral")
+    size, notes = choose_replacement(skus, sweden_usage(), BOTH_STOPPED, "vm-dc01", set())
     assert size == "Standard_B2as_v2"
     assert "vm-dc01: Standard_B2als_v2 skipped, Azure has no room for it just now" in notes
     assert any(note.startswith("vm-dc01: Standard_B2s skipped, a temporary disk") for note in notes)
 
 
-def test_replacement_leaves_out_tried_sizes_and_keeps_room_for_the_other_stopped_vm():
+def test_replacement_leaves_out_tried_sizes_and_full_families():
     skus = parse_skus(SWEDEN, "swedencentral")
-    # The PC still needs 2 of the Basv2 family's 2 vCPUs, so the DC has to move to another family.
-    size, _ = choose_replacement(
-        skus, parse_free_quota(usage(4, standardBasv2Family=2)), BOTH_STOPPED, "vm-dc01", set()
-    )
+    size, _ = choose_replacement(skus, sweden_usage(), BOTH_STOPPED, "vm-dc01", {"Standard_B2as_v2"})
     assert size == "Standard_B2ls_v2"
 
-    size, _ = choose_replacement(
-        skus, parse_free_quota(usage(4)), BOTH_STOPPED, "vm-ws01", {"Standard_B2as_v2"}
+    no_bsv2 = sweden_usage(standardBsv2Family=(0, 0))
+    size, notes = choose_replacement(skus, no_bsv2, BOTH_STOPPED, "vm-dc01", {"Standard_B2as_v2"})
+    assert size == "Standard_D2s_v5"
+    assert (
+        "vm-dc01: Standard_B2ls_v2 skipped, not enough vCPU quota left (standardBsv2Family, regional)"
+        in notes
     )
-    assert size == "Standard_B2ls_v2"
 
 
-def test_replacement_counts_a_running_vm_through_usage_only():
-    running = {**BOTH_STOPPED, "vm-dc01": {"size": "Standard_B2ls_v2", "power_state": "VM running"}}
-    usage_now = [{"name": {"value": "cores"}, "limit": 4, "currentValue": 2}]
-    size, _ = choose_replacement(
-        parse_skus(SWEDEN, "swedencentral"), parse_free_quota(usage_now), running, "vm-ws01", set()
-    )
-    assert size == "Standard_B2as_v2"
+def test_replacement_counts_a_vm_that_already_moved_in_its_new_family():
+    moved = {**BOTH_STOPPED, "vm-dc01": {"size": "Standard_B2ls_v2", "power_state": "VM running"}}
+    free = parse_free_quota(usage(4, used=4, standardBasv2Family=(4, 2), standardBsv2Family=(2, 2)))
+    tried = {"Standard_B2as_v2"}
+    size, _ = choose_replacement(parse_skus(SWEDEN, "swedencentral"), free, moved, "vm-ws01", tried)
+    assert size == "Standard_D2s_v5"
 
 
 def test_no_replacement_when_every_size_is_used_up():
-    tried = {"Standard_B2as_v2", "Standard_B2ls_v2"}
-    size, notes = choose_replacement(
-        parse_skus(SWEDEN, "swedencentral"), parse_free_quota(usage(4)), BOTH_STOPPED, "vm-dc01", tried
-    )
+    tried = {"Standard_B2as_v2", "Standard_B2ls_v2", "Standard_D2s_v5"}
+    skus = parse_skus(SWEDEN, "swedencentral")
+    size, notes = choose_replacement(skus, sweden_usage(), BOTH_STOPPED, "vm-dc01", tried)
     assert size is None
     assert any(note.startswith("vm-dc01: Standard_B2ms skipped, a temporary disk") for note in notes)
     assert choose_replacement({}, {}, {}, "vm-dc01", set()) == (None, ["vm-dc01 does not exist"])
@@ -241,7 +245,7 @@ def test_cli_replace_prints_the_new_size(tmp_path, capsys):
         {"name": name, "hardwareProfile": {"vmSize": vm["size"]}, "powerState": vm["power_state"]}
         for name, vm in BOTH_STOPPED.items()
     ]
-    files = {"skus": SWEDEN, "usage": usage(4), "vms": vms}
+    files = {"skus": SWEDEN, "usage": usage(4, used=4, standardBasv2Family=(4, 4)), "vms": vms}
     for name, content in files.items():
         (tmp_path / f"{name}.json").write_text(json.dumps(content))
     args = [f"--{name}={tmp_path / f'{name}.json'}" for name in files] + ["--location", "swedencentral"]
@@ -249,9 +253,8 @@ def test_cli_replace_prints_the_new_size(tmp_path, capsys):
     assert lab_sizes.main([*args, "--replace", "vm-ws01", "--tried", "Standard_B2as_v2"]) == 0
     assert capsys.readouterr().out.splitlines() == ["size=Standard_B2ls_v2"]
 
-    assert (
-        lab_sizes.main([*args, "--replace", "vm-ws01", "--tried", "Standard_B2as_v2,Standard_B2ls_v2"]) == 1
-    )
+    tried = "Standard_B2as_v2,Standard_B2ls_v2,Standard_D2s_v5"
+    assert lab_sizes.main([*args, "--replace", "vm-ws01", "--tried", tried]) == 1
     out = capsys.readouterr()
     assert out.out == ""
     assert "vm-ws01: Standard_B2ls_v2 skipped, Azure has no room for it just now" in out.err

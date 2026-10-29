@@ -23,10 +23,10 @@ no_room='AllocationFailed|ZonalAllocationFailed|OverconstrainedAllocationRequest
 # read the failure left over from an earlier one.
 declare -A starting
 for vm in "${vms[@]}"; do
-  state=$(az vm get-instance-view -g "$rg" -n "$vm" \
-    --query "instanceView.statuses[?starts_with(code, 'PowerState/')].displayStatus | [0]" -o tsv)
-  echo "$vm: $state"
-  if [ "$state" != "VM running" ]; then
+  # After a failed start the VM can have no power state at all, only "Provisioning failed".
+  state=$(az vm get-instance-view -g "$rg" -n "$vm" --query "instanceView.statuses[].displayStatus" -o tsv | paste -sd ',' -)
+  echo "$vm: ${state//,/, }"
+  if [[ "$state" != *"VM running"* ]]; then
     az vm start -g "$rg" -n "$vm" -o none >"$work/$vm.log" 2>&1 &
     starting[$vm]=$!
   fi

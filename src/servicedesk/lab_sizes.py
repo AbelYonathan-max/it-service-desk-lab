@@ -5,7 +5,8 @@ sizes are not offered to every subscription in every region. Before Terraform ru
 asks Azure what is available (``az vm list-skus``), how much quota is left (``az vm list-usage``) and
 which lab VMs exist already (``az vm list -d``), and this module picks a size for each VM:
 
-* a VM that exists keeps its size;
+* a VM that exists keeps its size (its cores are in the usage figures already: Azure counts a
+  deallocated VM against the quota too);
 * a new VM gets the first size in its preference list that is offered here, supports Trusted Launch
   (Generation 2 with Secure Boot and vTPM), works with a SCSI disk controller, has at least 4 GB of
   memory, and fits in what is left of both the regional quota and its family's quota;
@@ -164,10 +165,9 @@ class _Quota:
         for quota in ("cores", sku.family):
             self.needed[quota] += sku.vcpus
 
-
-def _deallocated(vm: dict[str, Any]) -> bool:
-    """A deallocated VM's cores are not in the usage figures, but it needs them back when it starts."""
-    return "deallocated" in str(vm.get("power_state", "")).lower()
+    def release(self, sku: Sku) -> None:
+        for quota in ("cores", sku.family):
+            self.needed[quota] -= sku.vcpus
 
 
 def _pick(
@@ -205,8 +205,6 @@ def choose(
         if not current:
             return None
         size = str(current.get("size"))
-        if _deallocated(current) and size in skus:
-            quota.reserve(skus[size])
         choice.notes.append(f"{vm} exists: keeping {size}")
         return size
 
@@ -247,10 +245,10 @@ def choose_replacement(
         return None, [f"{vm} does not exist"]
     notes: list[str] = []
     quota = _Quota(free)
-    for name, other in existing.items():
-        if name != vm and _deallocated(other) and str(other.get("size")) in skus:
-            quota.reserve(skus[str(other.get("size"))])
     old = skus.get(str(current.get("size")))
+    if old is not None:
+        # The usage figures count the VM in its present size until it moves.
+        quota.release(old)
     no_room = tried | {str(current.get("size"))}
     usable = []
     for name in candidates or (DC_CANDIDATES if vm == DC_VM else WS_CANDIDATES):

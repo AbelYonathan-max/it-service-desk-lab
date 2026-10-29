@@ -42,8 +42,10 @@ From the running lab, 29 October 2026:
   sync. Group-based licensing gives the 18 members of `GG-LIC-M365-BusinessPremium` Microsoft 365
   Business Premium, with no licence errors.
 - **Intune**: the Windows 11 PC is joined to Entra ID and enrolled, with the 6 policies applied
-  from Git. BitLocker encrypts it with XTS-AES 256 and keeps the recovery key in Entra ID, and
-  Windows LAPS manages its local administrator password.
+  from Git, and Intune reports it compliant. BitLocker encrypts it with XTS-AES 256 and keeps the
+  recovery key in Entra ID, and Windows LAPS manages its local administrator password. Before it was
+  compliant it needed a restart, because Intune reads BitLocker's state only at start-up, and a
+  Defender security intelligence update, because the Azure image's was 407 days old.
 
 ## What's where
 

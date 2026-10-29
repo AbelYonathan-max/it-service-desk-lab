@@ -1,9 +1,10 @@
 # Stage 2 for the PC: brings Microsoft Defender's security intelligence up to date, which Intune's
 # "KBC - Windows compliance" policy requires (signatureOutOfDate). The lab PC's Azure image came with
 # security intelligence from 17 September 2025, still in place on 29 October 2026 (407 days old):
-# Defender had not updated it by itself. The stage prints Defender's last update attempts, updates
-# from Microsoft Update (or from Microsoft's malware protection centre if that fails), and asks the
-# PC to sync with Intune so the compliance check sees the new version. Safe to run again.
+# Defender had not updated it by itself, and its log showed no attempt to. The stage prints
+# Defender's last update attempts, updates from Microsoft Update (or from Microsoft's malware
+# protection centre if that fails), and asks the PC to sync with Intune so the compliance check sees
+# the new version. Safe to run again.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 

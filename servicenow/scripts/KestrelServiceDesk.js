@@ -82,6 +82,13 @@ KestrelServiceDesk.prototype = {
         }
 
         var raisedByApprover = String(ritm.opened_by) === approver.getUniqueValue();
+        if (!raisedByApprover) {
+            // The item says it is waiting before its approval exists, never the other way round.
+            ritm.approval = 'requested';
+            ritm.stage = 'waiting_for_approval';
+            ritm.work_notes = 'Waiting for approval from ' + approver.getDisplayValue() + ' (' + this._approverRole(item) + ').';
+            ritm.update();
+        }
         var approval = new GlideRecord('sysapproval_approver');
         approval.initialize();
         approval.setValue('sysapproval', ritm.getUniqueValue());
@@ -93,13 +100,6 @@ KestrelServiceDesk.prototype = {
             'Approved automatically: the ' + this._approverRole(item) + ' raised this request.' :
             'Approval needed from the ' + this._approverRole(item) + ': ' + this._summary(ritm, item);
         approval.insert();
-
-        if (!raisedByApprover) {
-            ritm.approval = 'requested';
-            ritm.stage = 'waiting_for_approval';
-            ritm.work_notes = 'Waiting for approval from ' + approver.getDisplayValue() + ' (' + this._approverRole(item) + ').';
-            ritm.update();
-        }
         this.decide(ritm);
     },
 

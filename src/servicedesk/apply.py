@@ -14,17 +14,25 @@ from __future__ import annotations
 
 import json
 import re
-import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 from html import unescape
 from typing import Any
 
 from servicedesk.config import Config
 from servicedesk.kb import load_articles
-from servicedesk.snow import InstanceAsleepError, Record, ServiceNow, ServiceNowError, encode, in_query, quote
+from servicedesk.snow import (
+    InstanceAsleepError,
+    Record,
+    ServiceNow,
+    ServiceNowError,
+    encode,
+    in_query,
+    quote,
+    run_once,
+)
 
 SIMULATED = "correlation_idNOT LIKESIM-^ORcorrelation_idISEMPTY"
 VARIABLE_TYPES = {"yes_no": 1, "multi_line": 2, "select": 5, "single_line": 6, "reference": 8, "date": 9}
@@ -545,39 +553,17 @@ def apply_knowledge(a: Applier, config: Config, users: dict[str, str]) -> int:
     return len(articles)
 
 
-def publish_articles(
-    sn: ServiceNow,
-    config: Config,
-    article_ids: list[str],
-    *,
-    timeout: float = 300,
-    sleep: Callable[[float], None] = time.sleep,
-) -> None:
-    """Publishes draft articles with a one-off scheduled job (servicenow/scripts/publish_knowledge.js),
-    waits until they are published, then deletes the job."""
+def publish_articles(sn: ServiceNow, config: Config, article_ids: list[str]) -> None:
+    """Publishes draft articles with a one-off job (servicenow/scripts/publish_knowledge.js)."""
     ids = ",".join(article_ids)
-    job = sn.create(
-        "sysauto_script",
-        {
-            "name": PUBLISH_JOB,
-            "script": config.script("publish_knowledge.js").replace("ARTICLE_IDS", ids),
-            "run_type": "once",
-            "run_start": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
-            "active": True,
-        },
+    run_once(
+        sn,
+        PUBLISH_JOB,
+        config.script("publish_knowledge.js").replace("'IN', 'ARTICLE_IDS'", f"'IN', '{ids}'"),
+        lambda: (
+            not sn.query("kb_knowledge", f"sys_idIN{ids}^workflow_stateINdraft,review", fields=["sys_id"])
+        ),
     )
-    try:
-        waited = 0.0
-        while sn.query("kb_knowledge", f"sys_idIN{ids}^workflow_stateINdraft,review", fields=["sys_id"]):
-            if waited >= timeout:
-                raise ServiceNowError(
-                    f"The instance has not run the scheduled job {PUBLISH_JOB!r} in {timeout / 60:.0f} minutes. "
-                    "Errors from the job are in the instance's system log."
-                )
-            sleep(5)
-            waited += 5
-    finally:
-        sn.delete("sysauto_script", str(job["sys_id"]))
 
 
 def _choices(config: Config, spec: Any) -> list[tuple[str, str]]:

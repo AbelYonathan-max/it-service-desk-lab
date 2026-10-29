@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -12,6 +13,7 @@ from servicedesk.snow import Record, ServiceNowError, encode
 # What the instance fills in itself when a record is created.
 DEFAULTS = {"kb_knowledge": {"workflow_state": "draft"}}
 JOB_ARTICLES = re.compile(r"addQuery\('sys_id', 'IN', '([^']*)'\)")
+JOB_CHANGES = "var changes = "
 
 CONDITION = re.compile(
     r"^(?P<field>[\w.]+?)(?P<op>NOT IN|NOT LIKE|ISNOTEMPTY|ISEMPTY|STARTSWITH|IN|LIKE|!=|>=|<=|=|>|<)(?P<value>.*)$"
@@ -126,19 +128,25 @@ class FakeServiceNow:
         record = self.add(table, **{**DEFAULTS.get(table, {}), **data})
         self.writes.append(("create", table, dict(record)))
         if table == "sysauto_script":
-            self._run_publish_job(str(data.get("script", "")))
+            self._run_job(str(data.get("script", "")))
         return dict(record)
 
-    def _run_publish_job(self, script: str) -> None:
-        """The scheduler, which runs the one job apply starts (publish_knowledge.js) straight away."""
-        found = JOB_ARTICLES.search(script)
+    def _run_job(self, script: str) -> None:
+        """The scheduler, running a one-off job straight away. It knows the two scripts the code
+        starts: publish_knowledge.js and change_history.js."""
+        articles = JOB_ARTICLES.search(script)
         for article in self.tables.get("kb_knowledge", []):
             if (
-                found
-                and article["sys_id"] in found[1].split(",")
+                articles
+                and article["sys_id"] in articles[1].split(",")
                 and article["workflow_state"] in ("draft", "review")
             ):
                 article["workflow_state"] = "published"
+        if JOB_CHANGES in script:
+            start = script.index(JOB_CHANGES) + len(JOB_CHANGES)
+            changes, _ = json.JSONDecoder().raw_decode(script, start)
+            for change in self.tables.get("change_request", []):
+                change.update({k: encode(v) for k, v in changes.get(change["sys_id"], {}).items()})
 
     def update(
         self, table: str, sys_id: str, data: Mapping[str, Any], *, display_values: bool = False

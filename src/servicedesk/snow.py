@@ -15,6 +15,7 @@ import re
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -322,3 +323,38 @@ class ServiceNow:
             "user": (user or {}).get("name", self.connection.username),
             "build": build.removesuffix(".zip"),
         }
+
+
+def run_once(
+    sn: ServiceNow,
+    name: str,
+    script: str,
+    finished: Callable[[], bool],
+    *,
+    timeout: float = 300,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Runs a server-side script once, for what the Table API cannot do: as a scheduled job that the
+    instance starts straight away. Waits until ``finished`` says it worked, then deletes the job."""
+    job = sn.create(
+        "sysauto_script",
+        {
+            "name": name,
+            "script": script,
+            "run_type": "once",
+            "run_start": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+            "active": True,
+        },
+    )
+    try:
+        waited = 0.0
+        while not finished():
+            if waited >= timeout:
+                raise ServiceNowError(
+                    f"The instance has not finished the scheduled job {name!r} in {timeout / 60:.0f} minutes. "
+                    "Errors from the job are in the instance's system log."
+                )
+            sleep(5)
+            waited += 5
+    finally:
+        sn.delete("sysauto_script", str(job["sys_id"]))

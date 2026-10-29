@@ -158,7 +158,18 @@ def test_history_loads_into_servicenow_once(config: Any, history: History) -> No
     ]
     assert len(approvals) == sum(1 for r in history.requests if r.approver)
 
+    # The change model would not let the API walk changes through their states: a one-off job set them.
+    changes = {r["correlation_id"]: r for r in sim["change_request"]}
+    assert (changes["SIM-CHG-0001"]["state"], changes["SIM-CHG-0001"]["close_code"]) == ("3", "unsuccessful")
+    assert {r["state"] for r in changes.values()} == {"3", "-2"}
+    assert fake.tables["sysauto_script"] == []
+
     writes = len(fake.writes)
     again = write_history(cast(ServiceNow, fake), config, history, progress=lambda _: None)
     assert again.startswith("0 incidents, 0 requests, 0 problems and 0 changes")
     assert len(fake.writes) == writes
+
+    # A change left short of its final state (as the first load on a real instance left them) is put right.
+    changes["SIM-CHG-0002"]["state"] = "-5"
+    write_history(cast(ServiceNow, fake), config, history, progress=lambda _: None)
+    assert changes["SIM-CHG-0002"]["state"] == "3"

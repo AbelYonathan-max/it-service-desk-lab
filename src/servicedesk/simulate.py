@@ -23,6 +23,7 @@ timings are back-dated, so the SLA engine cannot measure them) and the report me
 
 from __future__ import annotations
 
+import json
 import math
 import random
 from collections.abc import Callable, Iterator, Sequence
@@ -34,7 +35,7 @@ from servicedesk.business_time import LONDON, WorkingHours
 from servicedesk.config import Config
 from servicedesk.people import Person
 from servicedesk.sla import Targets, Ticket
-from servicedesk.snow import ServiceNow, ServiceNowError, in_query
+from servicedesk.snow import ServiceNow, ServiceNowError, in_query, run_once
 
 DEFAULT_SEED = 15  # gives the history described above; other seeds tell the same story with other numbers
 PERIOD_START = date(2026, 7, 1)
@@ -908,6 +909,22 @@ def utc(moment: datetime | None) -> str:
     return moment.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S") if moment else ""
 
 
+def final_change_fields(change: Change) -> dict[str, Any]:
+    """Where a change ends up: closed with its outcome, or scheduled and approved."""
+    fields: dict[str, Any] = {"state": "3" if change.state == "closed" else "-2", "approval": "approved"}
+    if change.state == "closed":
+        fields.update(
+            {
+                "work_start": utc(change.start),
+                "work_end": utc(change.end),
+                "close_code": change.outcome,
+                "close_notes": change.close_notes,
+                "closed_at": utc(min(change.end + timedelta(days=1), AS_AT)),
+            }
+        )
+    return fields
+
+
 class Writer:
     """Creates the simulated records through the Table API, back-dated, skipping any already there."""
 
@@ -1019,6 +1036,7 @@ class Writer:
 
     def write_changes(self, changes: list[Change]) -> int:
         count = 0
+        finals: dict[str, dict[str, Any]] = {}
         for change in changes:
             fields = {
                 "type": change.type,
@@ -1039,35 +1057,37 @@ class Writer:
             sys_id = self.create(
                 "change_request", change.correlation_id, fields, {"opened_at": fields["opened_at"]}
             )
+            finals[self.ids[change.correlation_id]] = final_change_fields(change)
             if sys_id is None:
                 continue
             count += 1
-            path = {
-                "standard": ["-2", "-1", "0", "3"],
-                "normal": ["-4", "-3", "-2", "-1", "0", "3"],
-                "emergency": ["-3", "-2", "-1", "0", "3"],
-            }[change.type]
-            if change.state == "scheduled":
-                path = path[: path.index("-2") + 1]
-            steps: list[dict[str, Any]] = []
-            for state in path:
-                step: dict[str, Any] = {"state": state}
-                if state == "-2":
-                    step["approval"] = "approved"
-                if state == "-1":
-                    step["work_start"] = utc(change.start)
-                if state == "0":
-                    step["work_end"] = utc(change.end)
-                if state == "3":
-                    step.update({"close_code": change.outcome, "close_notes": change.close_notes})
-                steps.append(step)
-            self.step("change_request", sys_id, f"change {change.correlation_id}", steps)
             if change.problem in self.ids:
                 try:
                     self.sn.update("problem", self.ids[change.problem], {"rfc": sys_id})
                 except ServiceNowError as error:
                     self.progress(f"   could not link {change.correlation_id} to {change.problem}: {error}")
+        self.settle_changes(finals)
         return count
+
+    def settle_changes(self, finals: dict[str, dict[str, Any]]) -> None:
+        """Puts each change in its final state with a one-off job (servicenow/scripts/change_history.js),
+        as the change model will not let the Table API skip through the states."""
+
+        def unsettled() -> dict[str, dict[str, Any]]:
+            found = self.sn.query("change_request", in_query("sys_id", finals), fields=["sys_id", "state"])
+            return {
+                r["sys_id"]: finals[r["sys_id"]]
+                for r in found
+                if str(r.get("state")) != finals[r["sys_id"]]["state"]
+            }
+
+        pending = unsettled() if finals else {}
+        if not pending:
+            return
+        self.progress(f"   putting {len(pending)} changes in their final state")
+        values = json.dumps(pending, ensure_ascii=True, sort_keys=True)  # also a valid ES5 object literal
+        script = self.config.script("change_history.js").replace("= CHANGES;", f"= {values};")
+        run_once(self.sn, "Kestrel - load change history", script, lambda: not unsettled())
 
     def write_incidents(self, records: list[SimRecord]) -> int:
         close_codes = self.choice_values("incident", "close_code")

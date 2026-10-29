@@ -1,8 +1,11 @@
+from typing import cast
+
 import httpx
 import pytest
 import respx
 
-from servicedesk.snow import Connection, InstanceAsleepError, ServiceNow, ServiceNowError, in_query
+from servicedesk.snow import Connection, InstanceAsleepError, ServiceNow, ServiceNowError, in_query, run_once
+from tests.fake_servicenow import FakeServiceNow
 
 BASE = "https://dev123456.service-now.com"
 
@@ -158,3 +161,26 @@ def test_order_uses_the_service_catalog_api(sn: ServiceNow) -> None:
     body = route.calls[0].request.read()
     assert b'"sysparm_requested_for":"u1"' in body
     assert b'"variables":{"share":"Finance","user":"u1"}' in body
+
+
+def test_run_once_waits_for_the_job_then_deletes_it() -> None:
+    fake = FakeServiceNow()
+    polls: list[int] = []
+    run_once(
+        cast(ServiceNow, fake),
+        "job",
+        "gs.info('hi');",
+        lambda: len(polls) >= 2,
+        sleep=lambda _: polls.append(1),
+    )
+    [(created, _, job), (deleted, _, gone)] = [w for w in fake.writes if w[1] == "sysauto_script"]
+    assert (created, deleted) == ("create", "delete") and gone["sys_id"] == job["sys_id"]
+    assert job["run_type"] == "once" and job["script"] == "gs.info('hi');"
+    assert len(polls) == 2
+
+
+def test_run_once_gives_up_and_still_deletes_the_job() -> None:
+    fake = FakeServiceNow()
+    with pytest.raises(ServiceNowError, match="has not finished the scheduled job 'job' in 2 minutes"):
+        run_once(cast(ServiceNow, fake), "job", "", lambda: False, timeout=120, sleep=lambda _: None)
+    assert fake.tables["sysauto_script"] == []

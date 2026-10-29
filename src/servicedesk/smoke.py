@@ -21,12 +21,20 @@ from datetime import UTC, datetime
 from typing import Any
 
 from servicedesk.config import Config
-from servicedesk.snow import Record, ServiceNow, quote
+from servicedesk.snow import Record, ServiceNow, quote, resolution_code
 
 CALLER = "E10049"  # a customer services advisor
 ANALYST = "E10031"  # a service desk analyst
 OPEN_SHARE = "CustomerServices"
 RESTRICTED_SHARE = "HR"
+TASK_STATES = {
+    "-5": "pending",
+    "1": "open",
+    "2": "work in progress",
+    "3": "closed complete",
+    "4": "closed incomplete",
+    "7": "closed skipped",
+}
 
 
 @dataclass
@@ -81,6 +89,28 @@ class SmokeTest:
     def sys_id(self, table: str, query: str) -> str:
         record = self.sn.first(table, query, fields=["sys_id"])
         return str(record["sys_id"]) if record else ""
+
+    def tasks(self, ritm_id: str, query: str = "") -> str:
+        """The item's catalogue tasks, said so that a failed check shows where each one came from."""
+        found = self.sn.query(
+            "sc_task",
+            f"request_item={ritm_id}{query}^ORDERBYsys_created_on",
+            fields=["number", "short_description", "assignment_group.name", "state", "sys_created_by"],
+        )
+        return "; ".join(
+            f"{t.get('number')} '{t.get('short_description')}' for {t.get('assignment_group.name') or 'no group'}, "
+            f"{TASK_STATES.get(str(t.get('state')), t.get('state'))}, created by {t.get('sys_created_by')}"
+            for t in found
+        )
+
+    def last_work_note(self, sys_id: str) -> str:
+        notes = self.sn.query(
+            "sys_journal_field",
+            f"element_id={sys_id}^element=work_notes^ORDERBYDESCsys_created_on",
+            fields=["value"],
+            limit=1,
+        )
+        return str(notes[0].get("value", "")) if notes else ""
 
     # -- 1 ---------------------------------------------------------------------------------------
 
@@ -145,14 +175,12 @@ class SmokeTest:
         record = self.sn.get("incident", incident_id, fields=["work_start"]) or {}
         self.check("Actual start set when work starts", bool(record.get("work_start")))
 
-        close_code = self.sys_id("sys_choice", "name=incident^element=close_code^inactive=false")
-        code = self.sn.get("sys_choice", close_code, fields=["value"]) if close_code else None
         self.sn.update(
             "incident",
             incident_id,
             {
                 "state": 6,
-                "close_code": (code or {}).get("value", "Solution provided"),
+                "close_code": resolution_code(self.sn),
                 "close_notes": "Smoke test: resolved straight away.",
             },
         )
@@ -240,17 +268,37 @@ class SmokeTest:
         if not (wait_for_agent and task):
             return
 
-        def closed() -> Record | None:
+        def task_closed() -> Record | None:
+            record = self.sn.get("sc_task", task["sys_id"], fields=["state", "active", "close_notes"]) or {}
+            return record if record.get("active") == "false" else None
+
+        done = self.wait(task_closed, timeout=600, interval=15)
+        if done is None:
+            note = self.last_work_note(task["sys_id"])
+            detail = (
+                f"{task['number']} still open after 10 minutes; its last work note: {note}"
+                if note
+                else f"{task['number']} still open after 10 minutes and untouched: is the lab running and connected?"
+            )
+        else:
+            state = TASK_STATES.get(str(done.get("state")), done.get("state"))
+            detail = f"{task['number']} {state}: {done.get('close_notes')}"
+        if not self.check(
+            "Fulfilment agent carried out the task and closed it", (done or {}).get("state") == "3", detail
+        ):
+            return
+
+        def item_closed() -> Record | None:
             record = self.sn.get("sc_req_item", ritm_id, fields=["state", "active"]) or {}
             return record if record.get("active") == "false" else None
 
-        finished = self.wait(closed, timeout=600, interval=15)
+        item = self.wait(item_closed, timeout=60)
         self.check(
-            "Fulfilment agent carried it out and closed it",
-            bool(finished) and (finished or {}).get("state") == "3",
+            "Item closes with its task",
+            (item or {}).get("state") == "3",
             "closed complete"
-            if finished
-            else "still open after 10 minutes: is the lab running and connected?",
+            if item
+            else f"still open; open tasks: {self.tasks(ritm_id, '^active=true') or 'none'}",
         )
 
     def rejected_request(self) -> None:
@@ -277,8 +325,8 @@ class SmokeTest:
             bool(record) and (record or {}).get("approval") == "rejected",
             f"state={(record or {}).get('state')}",
         )
-        tasks = self.sn.query("sc_task", f"request_item={ritm_id}", fields=["sys_id"])
-        self.check("No task for a rejected request", not tasks)
+        tasks = self.tasks(ritm_id)
+        self.check("No task for a rejected request", not tasks, tasks)
 
 
 def run_smoke_test(

@@ -112,15 +112,18 @@ def test_requests_cover_starters_leavers_moves_and_shares(config: Any, history: 
 def loaded_instance(config: Any) -> FakeServiceNow:
     fake = base_instance()
     apply_all(cast(ServiceNow, fake), config, dry_run=False)
-    fake.add(
-        "sys_choice",
-        name="incident",
-        element="close_code",
-        value="Solution provided",
-        language="en",
-        inactive="false",
-        sequence="10",
-    )
+    # "Solution provided" is not the first resolution code that mentions a resolution.
+    codes = ["Duplicate", "Known error", "No resolution provided", "Solution provided"]
+    for sequence, value in enumerate(codes, start=1):
+        fake.add(
+            "sys_choice",
+            name="incident",
+            element="close_code",
+            value=value,
+            language="en",
+            inactive="false",
+            sequence=str(sequence * 10),
+        )
     return fake
 
 
@@ -146,6 +149,7 @@ def test_history_loads_into_servicenow_once(config: Any, history: History) -> No
     assert record["opened_at"] == "2026-09-15 07:20:00"  # 08:20 BST, stored in UTC
     child = next(r for r in sim["incident"] if r.get("parent_incident"))
     assert child["parent_incident"] == record["sys_id"]
+    assert {r["close_code"] for r in sim["incident"] if r.get("resolved_at")} == {"Solution provided"}
 
     leaver = next(r for r in history.requests if r.ticket.item == "Leaver" and r.ticket.state == "closed")
     item = next(r for r in sim["sc_req_item"] if r["correlation_id"] == leaver.ticket.number)
@@ -169,7 +173,11 @@ def test_history_loads_into_servicenow_once(config: Any, history: History) -> No
     assert again.startswith("0 incidents, 0 requests, 0 problems and 0 changes")
     assert len(fake.writes) == writes
 
-    # A change left short of its final state (as the first load on a real instance left them) is put right.
+    # A change left short of its final state (as the first load on a real instance left them) is put
+    # right, and so is an incident resolved with another code.
     changes["SIM-CHG-0002"]["state"] = "-5"
+    record["close_code"] = "No resolution provided"
     write_history(cast(ServiceNow, fake), config, history, progress=lambda _: None)
     assert changes["SIM-CHG-0002"]["state"] == "3"
+    assert record["close_code"] == "Solution provided"
+    assert fake.tables["sysauto_script"] == []

@@ -325,6 +325,20 @@ class ServiceNow:
         }
 
 
+def resolution_code(sn: ServiceNow) -> str:
+    """The incident resolution code that means "fixed": "Solution provided" on current releases. The
+    others mean something else, and a business rule refuses "Known error" without a known error article."""
+    codes = [
+        str(choice["value"])
+        for choice in sn.query(
+            "sys_choice", "name=incident^element=close_code^inactive=false^language=en", fields=["value"]
+        )
+    ]
+    if "Solution provided" in codes or not codes:
+        return "Solution provided"
+    return next((code for code in codes if code.lower().startswith(("solved", "resolved"))), codes[0])
+
+
 def run_once(
     sn: ServiceNow,
     name: str,

@@ -35,7 +35,7 @@ from servicedesk.business_time import LONDON, WorkingHours
 from servicedesk.config import Config
 from servicedesk.people import Person
 from servicedesk.sla import Targets, Ticket
-from servicedesk.snow import ServiceNow, ServiceNowError, in_query, run_once
+from servicedesk.snow import Record, ServiceNow, ServiceNowError, in_query, quote, resolution_code, run_once
 
 DEFAULT_SEED = 15  # gives the history described above; other seeds tell the same story with other numbers
 PERIOD_START = date(2026, 7, 1)
@@ -960,14 +960,6 @@ class Writer:
             ):
                 self.ids[record["correlation_id"]] = record["sys_id"]
 
-    def choice_values(self, table: str, element: str) -> list[str]:
-        found = self.sn.query(
-            "sys_choice",
-            f"name={table}^element={element}^inactive=false^language=en",
-            fields=["value", "sequence"],
-        )
-        return [c["value"] for c in sorted(found, key=lambda c: int(c.get("sequence") or 0))]
-
     def create(self, table: str, correlation: str, fields: dict[str, Any], fix: dict[str, Any]) -> str | None:
         """Creates a record, then puts back any back-dated field that a business rule overwrote."""
         if correlation in self.ids:
@@ -1069,9 +1061,23 @@ class Writer:
         self.settle_changes(finals)
         return count
 
+    def put_in_place(
+        self, table: str, pending: dict[str, dict[str, Any]], what: str, done: Callable[[], bool]
+    ) -> None:
+        """Sets fields (sys_id -> values) with a one-off job, servicenow/scripts/history.js, without the
+        business rules and change model that stop the Table API, then waits until ``done``."""
+        if not pending:
+            return
+        self.progress(f"   {what}")
+        values = json.dumps(
+            {table: pending}, ensure_ascii=True, sort_keys=True
+        )  # also a valid ES5 object literal
+        script = self.config.script("history.js").replace("= RECORDS;", f"= {values};")
+        run_once(self.sn, "Kestrel - put history in place", script, done)
+
     def settle_changes(self, finals: dict[str, dict[str, Any]]) -> None:
-        """Puts each change in its final state with a one-off job (servicenow/scripts/change_history.js),
-        as the change model will not let the Table API skip through the states."""
+        """Puts each change in its final state, which the change model will not let the Table API
+        reach by skipping through the states."""
 
         def unsettled() -> dict[str, dict[str, Any]]:
             found = self.sn.query("change_request", in_query("sys_id", finals), fields=["sys_id", "state"])
@@ -1082,18 +1088,15 @@ class Writer:
             }
 
         pending = unsettled() if finals else {}
-        if not pending:
-            return
-        self.progress(f"   putting {len(pending)} changes in their final state")
-        values = json.dumps(pending, ensure_ascii=True, sort_keys=True)  # also a valid ES5 object literal
-        script = self.config.script("change_history.js").replace("= CHANGES;", f"= {values};")
-        run_once(self.sn, "Kestrel - load change history", script, lambda: not unsettled())
+        self.put_in_place(
+            "change_request",
+            pending,
+            f"putting {len(pending)} changes in their final state",
+            lambda: not unsettled(),
+        )
 
     def write_incidents(self, records: list[SimRecord]) -> int:
-        close_codes = self.choice_values("incident", "close_code")
-        close_code = next(
-            (c for c in close_codes if "olution" in c or "olved" in c), close_codes[0] if close_codes else ""
-        )
+        close_code = resolution_code(self.sn)
         states = {"open": 1, "in_progress": 2, "on_hold": 3, "resolved": 6, "closed": 7}
         count = 0
         for index, record in enumerate(records, start=1):
@@ -1138,6 +1141,22 @@ class Writer:
                 count += 1
             if index % 50 == 0:
                 self.progress(f"   {index} of {len(records)} incidents")
+
+        # Earlier loads took the first code that mentioned a resolution, which can be "No resolution provided".
+        def other_code() -> list[Record]:
+            return self.sn.query(
+                "incident",
+                f"correlation_idSTARTSWITHSIM-^resolved_atISNOTEMPTY^close_code!={quote(close_code)}",
+                fields=["sys_id"],
+            )
+
+        pending = {r["sys_id"]: {"close_code": close_code} for r in other_code()}
+        self.put_in_place(
+            "incident",
+            pending,
+            f"giving {len(pending)} resolved incidents the resolution code {close_code}",
+            lambda: not other_code(),
+        )
         return count
 
     def write_requests(self, records: list[SimRecord]) -> int:

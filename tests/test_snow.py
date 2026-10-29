@@ -4,7 +4,15 @@ import httpx
 import pytest
 import respx
 
-from servicedesk.snow import Connection, InstanceAsleepError, ServiceNow, ServiceNowError, in_query, run_once
+from servicedesk.snow import (
+    Connection,
+    InstanceAsleepError,
+    ServiceNow,
+    ServiceNowError,
+    in_query,
+    resolution_code,
+    run_once,
+)
 from tests.fake_servicenow import FakeServiceNow
 
 BASE = "https://dev123456.service-now.com"
@@ -184,3 +192,24 @@ def test_run_once_gives_up_and_still_deletes_the_job() -> None:
     with pytest.raises(ServiceNowError, match="has not finished the scheduled job 'job' in 2 minutes"):
         run_once(cast(ServiceNow, fake), "job", "", lambda: False, timeout=120, sleep=lambda _: None)
     assert fake.tables["sysauto_script"] == []
+
+
+@pytest.mark.parametrize(
+    ("codes", "chosen"),
+    [
+        (["Duplicate", "Known error", "No resolution provided", "Solution provided"], "Solution provided"),
+        (["Not Solved (Too Costly)", "Solved (Permanently)"], "Solved (Permanently)"),
+        (["Duplicate"], "Duplicate"),
+        ([], "Solution provided"),
+    ],
+)
+def test_resolution_code_is_the_one_that_means_fixed(codes: list[str], chosen: str) -> None:
+    fake = FakeServiceNow()
+    for code in codes:
+        fake.add(
+            "sys_choice", name="incident", element="close_code", value=code, inactive="false", language="en"
+        )
+    fake.add(
+        "sys_choice", name="incident", element="close_code", value="Retired", inactive="true", language="en"
+    )
+    assert resolution_code(cast(ServiceNow, fake)) == chosen

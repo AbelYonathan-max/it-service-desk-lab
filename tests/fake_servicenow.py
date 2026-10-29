@@ -13,7 +13,7 @@ from servicedesk.snow import Record, ServiceNowError, encode
 # What the instance fills in itself when a record is created.
 DEFAULTS = {"kb_knowledge": {"workflow_state": "draft"}}
 JOB_ARTICLES = re.compile(r"addQuery\('sys_id', 'IN', '([^']*)'\)")
-JOB_CHANGES = "var changes = "
+JOB_RECORDS = "var records = "
 
 CONDITION = re.compile(
     r"^(?P<field>[\w.]+?)(?P<op>NOT IN|NOT LIKE|ISNOTEMPTY|ISEMPTY|STARTSWITH|IN|LIKE|!=|>=|<=|=|>|<)(?P<value>.*)$"
@@ -133,7 +133,7 @@ class FakeServiceNow:
 
     def _run_job(self, script: str) -> None:
         """The scheduler, running a one-off job straight away. It knows the two scripts the code
-        starts: publish_knowledge.js and change_history.js."""
+        starts: publish_knowledge.js and history.js."""
         articles = JOB_ARTICLES.search(script)
         for article in self.tables.get("kb_knowledge", []):
             if (
@@ -142,11 +142,12 @@ class FakeServiceNow:
                 and article["workflow_state"] in ("draft", "review")
             ):
                 article["workflow_state"] = "published"
-        if JOB_CHANGES in script:
-            start = script.index(JOB_CHANGES) + len(JOB_CHANGES)
-            changes, _ = json.JSONDecoder().raw_decode(script, start)
-            for change in self.tables.get("change_request", []):
-                change.update({k: encode(v) for k, v in changes.get(change["sys_id"], {}).items()})
+        if JOB_RECORDS in script:
+            start = script.index(JOB_RECORDS) + len(JOB_RECORDS)
+            tables, _ = json.JSONDecoder().raw_decode(script, start)
+            for table, rows in tables.items():
+                for record in self.tables.get(table, []):
+                    record.update({k: encode(v) for k, v in rows.get(record["sys_id"], {}).items()})
 
     def update(
         self, table: str, sys_id: str, data: Mapping[str, Any], *, display_values: bool = False

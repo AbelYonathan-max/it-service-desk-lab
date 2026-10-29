@@ -17,6 +17,12 @@ Usage (the lab workflow does this, region by region until one can take the domai
 ``--all`` matters: without it the Azure CLI hides the sizes closed to the subscription, so the
 reason for skipping them is lost. It prints ``key=value`` lines for ``$GITHUB_OUTPUT``, explains its
 choices on standard error, and exits with 1 when the domain controller does not fit.
+
+A stopped VM starts wherever Azure has room for its size, and sometimes there is none
+(AllocationFailed). ``--replace VM --tried SIZES`` then picks the next size for that VM in the same
+way, leaving out the sizes Azure had no room for and, because a Windows VM only resizes between sizes
+that both have a local temporary disk or both lack one, the sizes of the other kind. It prints
+``size=...`` (``infra/scripts/start-vms.sh`` moves the VM to it) and exits with 1 when none is left.
 """
 
 from __future__ import annotations
@@ -68,6 +74,7 @@ class Sku:
     trusted_launch: bool
     restricted: bool
     scsi: bool = True  # newer sizes (v6) only take NVMe disks, which the lab's VMs do not use
+    temp_disk: bool = False  # a local temporary disk (the D: drive on Windows)
 
 
 @dataclass
@@ -114,6 +121,7 @@ def parse_skus(raw_skus: list[dict[str, Any]], location: str) -> dict[str, Sku]:
             trusted_launch=(_capability(raw, "TrustedLaunchDisabled") or "False").lower() != "true",
             restricted=restricted,
             scsi="SCSI" in (_capability(raw, "DiskControllerTypes") or "SCSI"),
+            temp_disk=float(_capability(raw, "MaxResourceVolumeMB") or 0) > 0,
         )
     return skus
 
@@ -142,6 +150,44 @@ def unusable_reason(sku: Sku | None) -> str | None:
     return None
 
 
+@dataclass
+class _Quota:
+    """vCPUs promised so far against what is free, per quota name ("cores" is the regional total)."""
+
+    free: dict[str, int]
+    needed: defaultdict[str, int] = field(default_factory=lambda: defaultdict(int))
+
+    def fits(self, sku: Sku) -> bool:
+        return all(self.needed[q] + sku.vcpus <= self.free.get(q, UNLIMITED) for q in ("cores", sku.family))
+
+    def reserve(self, sku: Sku) -> None:
+        for quota in ("cores", sku.family):
+            self.needed[quota] += sku.vcpus
+
+
+def _deallocated(vm: dict[str, Any]) -> bool:
+    """A deallocated VM's cores are not in the usage figures, but it needs them back when it starts."""
+    return "deallocated" in str(vm.get("power_state", "")).lower()
+
+
+def _pick(
+    vm: str, candidates: list[str], skus: dict[str, Sku], quota: _Quota, notes: list[str]
+) -> str | None:
+    """The first of ``candidates`` that the lab can use and that fits in the quota left, now reserved."""
+    for name in candidates:
+        sku = skus.get(name)
+        reason = unusable_reason(sku)
+        if sku is not None and reason is None and not quota.fits(sku):
+            reason = f"not enough vCPU quota left ({sku.family}, regional)"
+        if sku is None or reason:
+            notes.append(f"{vm}: {name} skipped, {reason}")
+            continue
+        quota.reserve(sku)
+        notes.append(f"{vm}: {name} ({sku.vcpus} vCPUs, {sku.memory_gb:g} GB)")
+        return name
+    return None
+
+
 def choose(
     skus: dict[str, Sku],
     free: dict[str, int],
@@ -152,47 +198,29 @@ def choose(
 ) -> Choice:
     """Picks sizes for the DC and the PC. ``existing`` maps VM name to its size and power state."""
     choice = Choice()
-    # vCPUs still to find, per quota name: a deallocated VM needs its cores back when it starts.
-    needed: dict[str, int] = defaultdict(int)
-
-    def fits(sku: Sku) -> bool:
-        return all(needed[quota] + sku.vcpus <= free.get(quota, UNLIMITED) for quota in ("cores", sku.family))
-
-    def reserve(sku: Sku) -> None:
-        needed["cores"] += sku.vcpus
-        needed[sku.family] += sku.vcpus
+    quota = _Quota(free)
 
     def keep_existing(vm: str) -> str | None:
         current = existing.get(vm)
         if not current:
             return None
         size = str(current.get("size"))
-        if "deallocated" in str(current.get("power_state", "")).lower() and size in skus:
-            reserve(skus[size])
+        if _deallocated(current) and size in skus:
+            quota.reserve(skus[size])
         choice.notes.append(f"{vm} exists: keeping {size}")
         return size
 
-    def pick(vm: str, candidates: list[str]) -> str | None:
-        for name in candidates:
-            sku = skus.get(name)
-            reason = unusable_reason(sku)
-            if sku is not None and reason is None and not fits(sku):
-                reason = f"not enough vCPU quota left ({sku.family}, regional)"
-            if sku is None or reason:
-                choice.notes.append(f"{vm}: {name} skipped, {reason}")
-                continue
-            reserve(sku)
-            choice.notes.append(f"{vm}: {name} ({sku.vcpus} vCPUs, {sku.memory_gb:g} GB)")
-            return name
-        return None
-
-    choice.dc_size = keep_existing(DC_VM) or pick(DC_VM, dc_candidates or DC_CANDIDATES)
+    choice.dc_size = keep_existing(DC_VM) or _pick(
+        DC_VM, dc_candidates or DC_CANDIDATES, skus, quota, choice.notes
+    )
     if choice.dc_size is None:
         choice.notes.append("No size here fits the domain controller.")
         return choice
 
     if want_ws:
-        choice.ws_size = keep_existing(WS_VM) or pick(WS_VM, ws_candidates or WS_CANDIDATES)
+        choice.ws_size = keep_existing(WS_VM) or _pick(
+            WS_VM, ws_candidates or WS_CANDIDATES, skus, quota, choice.notes
+        )
         choice.enable_ws01 = choice.ws_size is not None
         if not choice.enable_ws01:
             choice.notes.append(
@@ -201,8 +229,48 @@ def choose(
     return choice
 
 
+def choose_replacement(
+    skus: dict[str, Sku],
+    free: dict[str, int],
+    existing: dict[str, dict[str, Any]],
+    vm: str,
+    tried: set[str],
+    candidates: list[str] | None = None,
+) -> tuple[str | None, list[str]]:
+    """Picks another size for ``vm``, a deallocated VM that Azure has no room to start in its own size.
+
+    ``tried`` holds the sizes Azure has had no room for (the VM's own size counts as one). The other
+    VMs keep their sizes. Returns the size, or None when nothing is left, and notes on the choice.
+    """
+    current = existing.get(vm)
+    if not current:
+        return None, [f"{vm} does not exist"]
+    notes: list[str] = []
+    quota = _Quota(free)
+    for name, other in existing.items():
+        if name != vm and _deallocated(other) and str(other.get("size")) in skus:
+            quota.reserve(skus[str(other.get("size"))])
+    old = skus.get(str(current.get("size")))
+    no_room = tried | {str(current.get("size"))}
+    usable = []
+    for name in candidates or (DC_CANDIDATES if vm == DC_VM else WS_CANDIDATES):
+        sku = skus.get(name)
+        if name in no_room:
+            notes.append(f"{vm}: {name} skipped, Azure has no room for it just now")
+        elif sku is not None and old is not None and sku.temp_disk != old.temp_disk:
+            notes.append(f"{vm}: {name} skipped, a temporary disk where {old.name} has none, or the reverse")
+        else:
+            usable.append(name)
+    return _pick(vm, usable, skus, quota, notes), notes
+
+
 def _load(path: str) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8") or "[]")
+
+
+def _names(text: str) -> list[str] | None:
+    """The names in a comma-separated list, or None when there are none."""
+    return [name.strip() for name in text.split(",") if name.strip()] or None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -218,8 +286,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-ws", action="store_true", help="build the domain controller only")
     parser.add_argument("--dc-candidates", default="", help="comma-separated sizes to try for the DC")
     parser.add_argument("--ws-candidates", default="", help="comma-separated sizes to try for the PC")
+    parser.add_argument(
+        "--replace", metavar="VM", help="pick another size for this VM, which Azure has no room for"
+    )
+    parser.add_argument(
+        "--tried", default="", help="with --replace: comma-separated sizes Azure had no room for"
+    )
     args = parser.parse_args(argv)
 
+    skus = parse_skus(_load(args.skus), args.location)
+    free = parse_free_quota(_load(args.usage))
     existing = {
         vm["name"]: {
             "size": (vm.get("hardwareProfile") or {}).get("vmSize"),
@@ -227,13 +303,26 @@ def main(argv: list[str] | None = None) -> int:
         }
         for vm in _load(args.vms)
     }
+    dc_candidates = _names(args.dc_candidates)
+    ws_candidates = _names(args.ws_candidates)
+
+    if args.replace:
+        size, notes = choose_replacement(
+            skus,
+            free,
+            existing,
+            args.replace,
+            set(_names(args.tried) or []),
+            dc_candidates if args.replace == DC_VM else ws_candidates,
+        )
+        for note in notes:
+            print(note, file=sys.stderr)
+        if size:
+            print(f"size={size}")
+        return 0 if size else 1
+
     choice = choose(
-        parse_skus(_load(args.skus), args.location),
-        parse_free_quota(_load(args.usage)),
-        existing,
-        want_ws=not args.no_ws,
-        dc_candidates=[s.strip() for s in args.dc_candidates.split(",") if s.strip()] or None,
-        ws_candidates=[s.strip() for s in args.ws_candidates.split(",") if s.strip()] or None,
+        skus, free, existing, want_ws=not args.no_ws, dc_candidates=dc_candidates, ws_candidates=ws_candidates
     )
     for note in choice.notes:
         print(note, file=sys.stderr)

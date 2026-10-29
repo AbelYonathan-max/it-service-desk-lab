@@ -56,6 +56,9 @@ jobs:
       TF_VAR_enable_budget: ${{ vars.ENABLE_BUDGET || 'false' }}
       TF_VAR_admin_object_ids: ${{ vars.LAB_ADMIN_OBJECT_IDS || '[]' }}
       TF_VAR_ws01_entra_join: ${{ vars.ENTRA_READY || 'false' }}
+      # Comma-separated VM sizes to try instead of the list in src/servicedesk/lab_sizes.py, if set.
+      DC_SIZES: ${{ vars.LAB_DC_SIZES }}
+      WS_SIZES: ${{ vars.LAB_WS_SIZES }}
     # Naming bash adds -o pipefail, so a failure anywhere in a pipeline fails the step.
     defaults:
       run:
@@ -95,6 +98,12 @@ jobs:
           done
           exit 1
 
+      # Azure only adds or changes a VM extension (the PC's Entra join) while the VM is running. This
+      # comes before the size choice because a VM that Azure has no room for moves to another size.
+      - name: Start existing VMs
+        if: inputs.action == 'deploy'
+        run: infra/scripts/start-vms.sh "$LAB_RG"
+
       # Free trials have 4 vCPUs per region, and some sizes and regions are closed to them, so the
       # region and sizes come from what Azure says this subscription can use: the configured region
       # first, then the others in order (European regions that offer Bastion Developer). A lab that
@@ -103,8 +112,6 @@ jobs:
         id: choose
         if: inputs.action == 'deploy'
         env:
-          DC_SIZES: ${{ vars.LAB_DC_SIZES }}
-          WS_SIZES: ${{ vars.LAB_WS_SIZES }}
           OTHER_REGIONS: ukwest francecentral northeurope westeurope swedencentral germanywestcentral norwayeast switzerlandnorth italynorth spaincentral
         run: |
           az vm list --resource-group "$LAB_RG" --show-details -o json > vms.json
@@ -152,11 +159,6 @@ jobs:
             | grep -E '^win11-[0-9]{2}h[12]-ent$' | sort -V | tail -1 || true)
           echo "client_sku=${CLIENT_SKU:-win11-25h2-ent}" >> "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
-
-      # Azure only adds or changes a VM extension (the PC's Entra join) while the VM is running.
-      - name: Start existing VMs
-        if: inputs.action == 'deploy'
-        run: infra/scripts/start-vms.sh "$LAB_RG"
 
       - name: Terraform apply
         if: inputs.action == 'deploy'

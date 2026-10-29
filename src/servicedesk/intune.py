@@ -196,36 +196,63 @@ def check_settings(graph: Graph, policies: list[Policy]) -> list[str]:
                 definitions[setting_id] = None
         return definitions[setting_id]
 
-    def check(entry: dict[str, Any], where: str) -> None:
+    def value_type(found: Any) -> str:
+        return str((found.get("valueDefinition") or {}).get("@odata.type", ""))
+
+    def renamed(setting_id: str, fits: Callable[[Any], bool]) -> str | None:
+        """The catalogue's usual variants of an ID: children of ADMX-backed settings end in _name, and
+        a setting Microsoft had to redefine comes back with _v2."""
+        for candidate in (f"{setting_id}_name", f"{setting_id}_v2"):
+            found = definition(candidate)
+            if found and fits(found):
+                return candidate
+        return None
+
+    def check(entry: dict[str, Any], where: str, siblings: list[str] | None = None) -> None:
         setting_id = entry["id"]
         found = definition(setting_id)
         if not found:
-            problems.append(f"{where}: {setting_id} is not in this tenant's settings catalog.")
+            problem = f"{where}: {setting_id} is not in this tenant's settings catalog."
+            hint = renamed(setting_id, lambda _: True)
+            if hint:
+                problem += f" It has {hint}."
+            elif siblings:
+                problem += f" The option above it has these settings: {', '.join(siblings)}."
+            problems.append(problem)
             return
         odata = str(found.get("@odata.type", ""))
-        value_type = str((found.get("valueDefinition") or {}).get("@odata.type", ""))
+        options = found.get("options") or []
         if "choice" in entry:
-            options = [str(o.get("itemId")) for o in found.get("options") or []]
+            option_ids = [str(o.get("itemId")) for o in options]
             if "Choice" not in odata:
                 problems.append(f"{where}: {setting_id} is not a choice setting.")
-            elif choice_value(entry) not in options:
+            elif choice_value(entry) not in option_ids:
                 problems.append(
                     f"{where}: {setting_id} has no option {choice_value(entry)} "
-                    f"(it offers {', '.join(o.removeprefix(setting_id) for o in options)})."
+                    f"(it offers {', '.join(o.removeprefix(setting_id) for o in option_ids)})."
                 )
         elif "integer" in entry:
             limits = found.get("valueDefinition") or {}
             low, high = limits.get("minimumValue"), limits.get("maximumValue")
-            if "Integer" not in value_type:
-                problems.append(f"{where}: {setting_id} does not take a whole number.")
+            if "Integer" not in value_type(found):
+                hint = renamed(setting_id, lambda other: "Integer" in value_type(other))
+                problems.append(
+                    f"{where}: {setting_id} does not take a whole number."
+                    + (f" {hint} does." if hint else "")
+                )
             elif (low is not None and entry["integer"] < low) or (
                 high is not None and entry["integer"] > high
             ):
                 problems.append(f"{where}: {setting_id} must be between {low} and {high}.")
-        elif "String" not in value_type:
+        elif "String" not in value_type(found):
             problems.append(f"{where}: {setting_id} does not take text.")
+        # A child has to be one of the settings that the chosen option brings with it.
+        children: list[str] = []
+        for option in options if "choice" in entry else []:
+            if option.get("itemId") == choice_value(entry):
+                children = [str(d.get("dependedOnBy")) for d in option.get("dependedOnBy") or []]
         for child in entry.get("children", []):
-            check(child, where)
+            check(child, where, children)
 
     for policy in policies:
         for entry in policy.settings:

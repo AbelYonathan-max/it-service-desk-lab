@@ -10,7 +10,7 @@ from servicedesk.entra import BUSINESS_PREMIUM, license_group, tenant_status
 from servicedesk.graph import Graph, GraphError, odata_quote, token_from_azure_cli
 from servicedesk.intune import Intune, IntuneError, Policy, load_policies, settings_key
 from servicedesk.people import REPO_ROOT
-from tests.fake_graph import FakeGraph, catalogue_for
+from tests.fake_graph import CHOICE_DEFINITION, SIMPLE_DEFINITION, VALUE_DEFINITION, FakeGraph, catalogue_for
 
 LICENCE_GROUP = "GG-LIC-M365-BusinessPremium"
 
@@ -50,7 +50,7 @@ def test_a_settings_policy_becomes_graph_json(policies: list[Policy]) -> None:
     silent = bitlocker["settings"][1]["settingInstance"]["choiceSettingValue"]
     assert silent["children"][0]["choiceSettingValue"]["value"].endswith("allowstandarduserencryption_1")
     recovery = bitlocker["settings"][3]["settingInstance"]["choiceSettingValue"]["children"]
-    assert recovery[0]["choiceSettingValue"]["value"].endswith("_osallowdra_false")
+    assert recovery[0]["choiceSettingValue"]["value"].endswith("_osallowdra_name_0")
     laps = next(p for p in policies if p.name == "KBC - Windows LAPS").body()
     length = next(
         s["settingInstance"]
@@ -118,6 +118,64 @@ def test_unknown_settings_stop_the_run_before_any_change(policies: list[Policy])
     )
     assert "has no option device_vendor_msft_laps_policies_passwordcomplexity_4" in text
     assert fake.writes == []
+
+
+RECOVERY = "device_vendor_msft_bitlocker_systemdrivesrecoveryoptions"
+INACTIVITY = (
+    "device_vendor_msft_policy_config_localpoliciessecurityoptions_interactivelogon_machineinactivitylimit"
+)
+
+
+def test_catalogue_mismatches_name_the_setting_to_use(tmp_path: Path) -> None:
+    # What a real tenant answered to the first version of the BitLocker and device security policies.
+    (tmp_path / "policy.yaml").write_text(
+        f"""kind: settings
+name: x
+assign: all devices
+settings:
+  - id: {RECOVERY}
+    choice: 1
+    children:
+      - id: {RECOVERY}_osallowdra
+        choice: 0
+      - id: {RECOVERY}_ostypo
+        choice: 1
+  - id: {INACTIVITY}
+    integer: 900
+""",
+        encoding="utf-8",
+    )
+    recovery = {
+        "@odata.type": CHOICE_DEFINITION,
+        "options": [
+            {"itemId": f"{RECOVERY}_0"},
+            {"itemId": f"{RECOVERY}_1", "dependedOnBy": [{"dependedOnBy": f"{RECOVERY}_osallowdra_name"}]},
+        ],
+    }
+    fake = FakeGraph(
+        {
+            RECOVERY: recovery,
+            f"{RECOVERY}_osallowdra_name": {
+                "@odata.type": CHOICE_DEFINITION,
+                "options": [{"itemId": f"{RECOVERY}_osallowdra_name_0"}],
+            },
+            INACTIVITY: {"@odata.type": CHOICE_DEFINITION, "options": [{"itemId": f"{INACTIVITY}_1"}]},
+            f"{INACTIVITY}_v2": {
+                "@odata.type": SIMPLE_DEFINITION,
+                "valueDefinition": {"@odata.type": VALUE_DEFINITION.format("Integer")},
+            },
+        }
+    )
+    with pytest.raises(IntuneError) as error:
+        run(fake, load_policies(tmp_path), apply=False)
+    text = str(error.value)
+    assert (
+        f"{RECOVERY}_osallowdra is not in this tenant's settings catalog. It has {RECOVERY}_osallowdra_name."
+        in text
+    )
+    siblings = f"The option above it has these settings: {RECOVERY}_osallowdra_name."
+    assert f"_ostypo is not in this tenant's settings catalog. {siblings}" in text
+    assert f"{INACTIVITY} does not take a whole number. {INACTIVITY}_v2 does." in text
 
 
 def test_apply_creates_everything_once(policies: list[Policy]) -> None:
@@ -345,6 +403,9 @@ def test_intune_and_group_policy_agree(policies: list[Policy]) -> None:
     notice = re.search(r"'LegalNoticeText' '([^']*)'", gpo)
     timeout = re.search(r"'InactivityTimeoutSecs' (\d+)", gpo)
     assert notice and timeout
-    settings = {s["id"].rsplit("_", 1)[-1]: s for p in policies for s in p.settings}
-    assert settings["messagetextforusersattemptingtologon"]["string"] == notice.group(1)
-    assert settings["machineinactivitylimit"]["integer"] == int(timeout.group(1))
+
+    def setting(name: str) -> dict[str, Any]:
+        return next(s for p in policies for s in p.settings if f"_{name}" in s["id"])
+
+    assert setting("messagetextforusersattemptingtologon")["string"] == notice.group(1)
+    assert setting("machineinactivitylimit")["integer"] == int(timeout.group(1))

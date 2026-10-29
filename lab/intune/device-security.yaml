@@ -9,7 +9,8 @@ description: >-
   SmartScreen enforced. Managed in Git (lab/intune).
 assign: all devices
 settings:
-  - id: device_vendor_msft_policy_config_localpoliciessecurityoptions_interactivelogon_machineinactivitylimit
+  # The first version of this setting in the catalogue is an on/off switch; _v2 takes seconds.
+  - id: device_vendor_msft_policy_config_localpoliciessecurityoptions_interactivelogon_machineinactivitylimit_v2
     integer: 900 # seconds
   - id: device_vendor_msft_policy_config_localpoliciessecurityoptions_interactivelogon_messagetitleforusersattemptingtologon
     string: Kestrel Borough Council

@@ -29,17 +29,17 @@ settings:
   - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions
     choice: 1
     children:
-      - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_osallowdra
-        choice: "false"
+      - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_osallowdra_name
+        choice: 0 # no data recovery agent
       - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_osrecoverypasswordusagedropdown_name
         choice: 2 # allow a 48-digit recovery password
       - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_osrecoverykeyusagedropdown_name
         choice: 2 # allow a 256-bit recovery key
-      - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_oshiderecoverypage
-        choice: "true" # users are not asked to save a key themselves
-      - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_osactivedirectorybackup
-        choice: "true" # for an Entra-joined PC, this means Entra ID
+      - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_oshiderecoverypage_name
+        choice: 1 # users are not asked to save a key themselves
+      - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_osactivedirectorybackup_name
+        choice: 1 # for an Entra-joined PC, this means Entra ID
       - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_osactivedirectorybackupdropdown_name
         choice: 1 # recovery passwords and key packages
-      - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_osrequireactivedirectorybackup
-        choice: "true" # no encryption until the key is safely stored
+      - id: device_vendor_msft_bitlocker_systemdrivesrecoveryoptions_osrequireactivedirectorybackup_name
+        choice: 1 # no encryption until the key is safely stored

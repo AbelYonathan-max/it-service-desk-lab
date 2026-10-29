@@ -28,6 +28,23 @@ Every person, ticket and number in it is made up.
 Leavers, moves and shared drive access work the same way. Anything the agent cannot do goes to
 the Identity and Access team with the reason.
 
+## Results
+
+From the running lab, 29 October 2026:
+
+- **End to end**: the ServiceNow smoke test passes every check. A shared drive request goes to the
+  data owner, is approved, and the agent on the domain controller carries it out in Active
+  Directory and closes the task.
+- **SLA report** for September 2026, from the simulated history ([docs/reports](docs/reports)):
+  98.8% of incidents responded to within target, 91.8% resolved within target, and 88.9% of
+  requests completed on time against a 90% target.
+- **Entra ID**: Cloud Sync copies all 74 staff accounts from Active Directory, with password hash
+  sync. Group-based licensing gives the 18 members of `GG-LIC-M365-BusinessPremium` Microsoft 365
+  Business Premium, with no licence errors.
+- **Intune**: the Windows 11 PC is joined to Entra ID and enrolled, with the 6 policies applied
+  from Git. BitLocker encrypts it with XTS-AES 256 and keeps the recovery key in Entra ID, and
+  Windows LAPS manages its local administrator password.
+
 ## What's where
 
 | Folder | What it holds |

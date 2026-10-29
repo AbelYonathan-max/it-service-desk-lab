@@ -378,6 +378,36 @@ def test_status_says_why_a_pc_is_not_encrypted(policies: list[Policy]) -> None:
     )
 
 
+def test_status_lists_the_compliance_rules_a_pc_does_not_meet(policies: list[Policy]) -> None:
+    fake = licensed_tenant(policies)
+    fake.devices = [
+        {"id": "d1", "deviceName": "WS01", "complianceState": "inGracePeriod", "isEncrypted": True}
+    ]
+    fake.compliance_states = {
+        "d1": [
+            {
+                "displayName": "KBC - Windows compliance",
+                "userPrincipalName": "lab.admin@example.org",
+                "settingStates": [
+                    {
+                        "settingName": "BitLockerEnabled",
+                        "state": "nonCompliant",
+                        "userPrincipalName": "a@example.org",
+                    },
+                    {"settingName": "TpmRequired", "state": "compliant"},
+                    {"settingName": "PasswordRequired", "state": "notApplicable"},
+                ],
+            }
+        ]
+    }
+    text = "\n".join(tenant_status(cast(Graph, fake), LICENCE_GROUP, policies))
+    assert (
+        "- WS01 is inGracePeriod. Rules not met: KBC - Windows compliance: BitLockerEnabled nonCompliant."
+        in text
+    )
+    assert "@" not in text
+
+
 # -- the Graph client itself -------------------------------------------------------------------------------
 
 

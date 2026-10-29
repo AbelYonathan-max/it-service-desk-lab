@@ -110,7 +110,7 @@ def tenant_status(graph: Graph, group_name: str, policies: list[Policy]) -> list
 
     devices = graph.get_all(
         "/beta/deviceManagement/managedDevices",
-        {"$select": "deviceName,operatingSystem,osVersion,complianceState,isEncrypted,lastSyncDateTime"},
+        {"$select": "id,deviceName,operatingSystem,osVersion,complianceState,isEncrypted,lastSyncDateTime"},
     )
     lines += ["", "| PC | Windows | Compliance | Encrypted | Last check-in (UTC) |", "|---|---|---|---|---|"]
     for device in sorted(devices, key=lambda d: str(d.get("deviceName"))):
@@ -135,6 +135,33 @@ def tenant_status(graph: Graph, group_name: str, policies: list[Policy]) -> list
             f"BitLocker policy {state.get('encryptionPolicySettingState')}, "
             f"BitLocker reports: {state.get('advancedBitLockerStates') or 'nothing'}."
         )
+    # For a PC that is not compliant, or is in its grace period, the compliance rules it does not meet yet.
+    unmet_lines = []
+    for device in sorted(devices, key=lambda d: str(d.get("deviceName"))):
+        if device.get("complianceState") == "compliant":
+            continue
+        try:
+            policy_states = graph.get_all(
+                f"/beta/deviceManagement/managedDevices/{device.get('id')}/deviceCompliancePolicyStates"
+            )
+        except GraphError as error:
+            unmet_lines.append(
+                f"- {device.get('deviceName')}: compliance rules not readable ({error.code or error.status})."
+            )
+            continue
+        unmet = [
+            f"{policy_state.get('displayName')}: "
+            f"{setting.get('settingName') or setting.get('setting')} {setting.get('state')}"
+            for policy_state in policy_states
+            for setting in policy_state.get("settingStates") or []
+            if setting.get("state") not in ("compliant", "notApplicable")
+        ]
+        unmet_lines.append(
+            f"- {device.get('deviceName')} is {device.get('complianceState')}. "
+            f"Rules not met: {'; '.join(unmet) or 'none reported yet'}."
+        )
+    if unmet_lines:
+        lines += ["", *unmet_lines]
 
     lines += [
         "",

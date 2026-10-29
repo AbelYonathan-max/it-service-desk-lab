@@ -75,6 +75,7 @@ class FakeGraph:
         self.users: list[dict[str, Any]] = []
         self.devices: list[dict[str, Any]] = []
         self.encryption_states: list[dict[str, Any]] = []
+        self.compliance_states: dict[str, list[dict[str, Any]]] = {}
         self.writes: list[tuple[str, str, Any]] = []
         self._next = 0
 
@@ -149,6 +150,9 @@ class FakeGraph:
             return copy.deepcopy(self.devices)
         if path == DM + "managedDeviceEncryptionStates":
             return copy.deepcopy(self.encryption_states)
+        match = re.fullmatch(DM + r"managedDevices/([\w-]+)/deviceCompliancePolicyStates", path)
+        if match:
+            return copy.deepcopy(self.compliance_states.get(match.group(1), []))
         if path == "/v1.0/subscribedSkus":
             return copy.deepcopy(self.skus)
         if path == "/v1.0/groups":

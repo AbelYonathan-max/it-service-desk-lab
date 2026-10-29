@@ -31,8 +31,10 @@ VARIABLE_TYPES = {"yes_no": 1, "multi_line": 2, "select": 5, "single_line": 6, "
 STAFF_QUALIFIER = "active=true^employee_numberSTARTSWITHE"
 DEFAULT_SLA_FLOW = "Default SLA flow"
 SLA_PREFIX = "Kestrel "
-# Fields the instance keeps as sanitised HTML: it escapes quotes and drops line breaks between tags.
+# Fields the instance keeps as sanitised HTML: it escapes quotes, drops line breaks between tags and
+# adds attributes to links.
 HTML_FIELDS = {("kb_knowledge", "text"), ("sc_cat_item", "description")}
+LINK = re.compile(r'<a\s[^>]*?(href="[^"]*")[^>]*>')
 PUBLISH_JOB = "Kestrel - publish knowledge articles"
 SLA_NAME_LENGTH = 40  # what contract_sla.name holds: ServiceNow cuts a longer name off without a word
 
@@ -59,6 +61,8 @@ class Change:
             if len(old) <= width and len(new) <= width and "\n" not in old + new:
                 lines.append(f"{name}: {old!r} -> {new!r}")
                 continue
+            if (self.table, name) in HTML_FIELDS:
+                old, new = tidy(old, html=True), tidy(new, html=True)  # where they differ once compared
             at = next(
                 (i for i, (x, y) in enumerate(zip(old, new, strict=False)) if x != y), min(len(old), len(new))
             )
@@ -70,19 +74,18 @@ class Change:
         return lines
 
 
+def tidy(text: str, *, html: bool = False) -> str:
+    """A value as compared: without trailing spaces or Windows line endings and, for HTML, without
+    what the instance's sanitiser changes (escaped quotes, line breaks between tags, link attributes)."""
+    if html:
+        text = LINK.sub(r"<a \1>", re.sub(r">\s+<", "><", unescape(text)))
+    return "\n".join(line.rstrip() for line in text.replace("\r\n", "\n").strip().split("\n"))
+
+
 def same(current: Any, desired: str, *, html: bool = False) -> bool:
-    """Compares a stored value with the wanted one, ignoring line endings and trailing spaces, and
-    for HTML what the instance's sanitiser changes (escaped quotes, line breaks between tags)."""
+    """Compares a stored value with the wanted one, as ``tidy`` leaves them."""
     have = "" if current is None else str(current)
-    if have == desired:
-        return True
-
-    def tidy(text: str) -> str:
-        if html:
-            text = re.sub(r">\s+<", "><", unescape(text))
-        return "\n".join(line.rstrip() for line in text.replace("\r\n", "\n").strip().split("\n"))
-
-    return tidy(have) == tidy(desired)
+    return have == desired or tidy(have, html=html) == tidy(desired, html=html)
 
 
 def duration(hours: float = 0, minutes: float = 0) -> str:

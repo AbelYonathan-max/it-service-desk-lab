@@ -32,11 +32,12 @@ def test_same_ignores_line_endings_and_trailing_spaces() -> None:
 
 
 def test_html_is_compared_as_the_instance_stores_it() -> None:
-    stored = "<p>It&#39;s &#34;done&#34;</p><ol><li>One</li><li>Two</li></ol>"
-    sent = '<p>It\'s "done"</p>\n<ol>\n<li>One</li>\n<li>Two</li>\n</ol>'
+    stored = '<p>It&#39;s &#34;done&#34;: <a rel="nofollow" href="https://aka.ms/sspr">reset</a></p><ol><li>One</li></ol>'
+    sent = '<p>It\'s "done": <a href="https://aka.ms/sspr">reset</a></p>\n<ol>\n<li>One</li>\n</ol>'
     assert same(stored, sent, html=True)
     assert not same(stored, sent)
-    assert not same(stored, sent.replace("Two", "Three"), html=True)
+    assert not same(stored, sent.replace("One", "Two"), html=True)
+    assert not same(stored, sent.replace("aka.ms/sspr", "aka.ms/mfasetup"), html=True)
 
 
 def test_fake_reads_encoded_queries() -> None:

@@ -135,7 +135,8 @@ def tenant_status(graph: Graph, group_name: str, policies: list[Policy]) -> list
             f"BitLocker policy {state.get('encryptionPolicySettingState')}, "
             f"BitLocker reports: {state.get('advancedBitLockerStates') or 'nothing'}."
         )
-    # For a PC that is not compliant, or is in its grace period, the compliance rules it does not meet yet.
+    # For a PC that is not compliant, or is in its grace period: the compliance policies it has not met
+    # yet, and the rules in them that Intune reports for the PC.
     unmet_lines = []
     for device in sorted(devices, key=lambda d: str(d.get("deviceName"))):
         if device.get("complianceState") == "compliant":
@@ -146,19 +147,25 @@ def tenant_status(graph: Graph, group_name: str, policies: list[Policy]) -> list
             )
         except GraphError as error:
             unmet_lines.append(
-                f"- {device.get('deviceName')}: compliance rules not readable ({error.code or error.status})."
+                f"- {device.get('deviceName')}: compliance details not readable ({error.code or error.status})."
             )
             continue
-        unmet = [
-            f"{policy_state.get('displayName')}: "
-            f"{setting.get('settingName') or setting.get('setting')} {setting.get('state')}"
-            for policy_state in policy_states
-            for setting in policy_state.get("settingStates") or []
-            if setting.get("state") not in ("compliant", "notApplicable")
-        ]
+        failing = []
+        for policy_state in policy_states:
+            if policy_state.get("state") in ("compliant", "notApplicable"):
+                continue
+            rules = [
+                f"{setting.get('settingName') or setting.get('setting')} {setting.get('state')}"
+                for setting in policy_state.get("settingStates") or []
+                if setting.get("state") not in ("compliant", "notApplicable")
+            ]
+            failing.append(
+                f"{policy_state.get('displayName')} {policy_state.get('state')}"
+                + (f" ({', '.join(rules)})" if rules else "")
+            )
         unmet_lines.append(
-            f"- {device.get('deviceName')} is {device.get('complianceState')}. "
-            f"Rules not met: {'; '.join(unmet) or 'none reported yet'}."
+            f"- {device.get('deviceName')} is {device.get('complianceState')}: "
+            f"{'; '.join(failing) or 'no policy reported as failing for the PC yet'}."
         )
     if unmet_lines:
         lines += ["", *unmet_lines]
@@ -168,6 +175,7 @@ def tenant_status(graph: Graph, group_name: str, policies: list[Policy]) -> list
         "| Policy | Succeeded | Failed or error | Pending | Not applicable |",
         "|---|---|---|---|---|",
     ]
+    rule_lines = []
     for policy in policies:
         name_field = "name" if policy.kind == "settings" else "displayName"
         found = [
@@ -187,4 +195,25 @@ def tenant_status(graph: Graph, group_name: str, policies: list[Policy]) -> list
                 f"| {policy.name} | {overview.get('successCount', 0)} | {failed} "
                 f"| {overview.get('pendingCount', 0)} | {overview.get('notApplicableCount', 0)} |"
             )
+            if failed:
+                rule_lines.append(_unmet_rules(graph, policy, found[0]["id"]))
+    if rule_lines:
+        lines += ["", *rule_lines]
     return lines
+
+
+def _unmet_rules(graph: Graph, policy: Policy, policy_id: str) -> str:
+    """The rules of a policy that some PC does not meet, from Intune's count of PCs for each rule."""
+    try:
+        summaries = graph.get_all(f"{policy.collection}/{policy_id}/deviceSettingStateSummaries")
+    except GraphError as error:
+        return f"- {policy.name}: rule results not readable ({error.code or error.status})."
+    unmet = []
+    for summary in summaries:
+        counts = {
+            key: int(summary.get(f"{key}DeviceCount") or 0) for key in ("nonCompliant", "error", "conflict")
+        }
+        if any(counts.values()):
+            found = ", ".join(f"{key} {count}" for key, count in counts.items() if count)
+            unmet.append(f"{summary.get('settingName') or summary.get('instancePath')} ({found})")
+    return f"- {policy.name}: rules not met: {'; '.join(unmet) or 'none reported yet'}."

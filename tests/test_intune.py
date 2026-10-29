@@ -380,6 +380,7 @@ def test_status_says_why_a_pc_is_not_encrypted(policies: list[Policy]) -> None:
 
 def test_status_lists_the_compliance_rules_a_pc_does_not_meet(policies: list[Policy]) -> None:
     fake = licensed_tenant(policies)
+    run(fake, policies, apply=True)
     fake.devices = [
         {"id": "d1", "deviceName": "WS01", "complianceState": "inGracePeriod", "isEncrypted": True}
     ]
@@ -387,6 +388,7 @@ def test_status_lists_the_compliance_rules_a_pc_does_not_meet(policies: list[Pol
         "d1": [
             {
                 "displayName": "KBC - Windows compliance",
+                "state": "nonCompliant",
                 "userPrincipalName": "lab.admin@example.org",
                 "settingStates": [
                     {
@@ -397,14 +399,25 @@ def test_status_lists_the_compliance_rules_a_pc_does_not_meet(policies: list[Pol
                     {"settingName": "TpmRequired", "state": "compliant"},
                     {"settingName": "PasswordRequired", "state": "notApplicable"},
                 ],
-            }
+            },
+            {"displayName": "Default Device Compliance Policy", "state": "compliant", "settingStates": []},
+        ]
+    }
+    fake.failed = {"KBC - Windows compliance": 1}
+    fake.setting_summaries = {
+        "KBC - Windows compliance": [
+            {"settingName": "BitLockerEnabled", "nonCompliantDeviceCount": 1, "compliantDeviceCount": 0},
+            {"settingName": "TpmRequired", "compliantDeviceCount": 1},
         ]
     }
     text = "\n".join(tenant_status(cast(Graph, fake), LICENCE_GROUP, policies))
     assert (
-        "- WS01 is inGracePeriod. Rules not met: KBC - Windows compliance: BitLockerEnabled nonCompliant."
+        "- WS01 is inGracePeriod: KBC - Windows compliance nonCompliant (BitLockerEnabled nonCompliant)."
         in text
     )
+    assert "| KBC - Windows compliance | 1 | 1 | 0 | 0 |" in text
+    assert "- KBC - Windows compliance: rules not met: BitLockerEnabled (nonCompliant 1)." in text
+    assert "Default Device Compliance Policy" not in text
     assert "@" not in text
 
 

@@ -76,6 +76,9 @@ class FakeGraph:
         self.devices: list[dict[str, Any]] = []
         self.encryption_states: list[dict[str, Any]] = []
         self.compliance_states: dict[str, list[dict[str, Any]]] = {}
+        # By policy name: how many PCs fail it, and its count of PCs for each rule.
+        self.failed: dict[str, int] = {}
+        self.setting_summaries: dict[str, list[dict[str, Any]]] = {}
         self.writes: list[tuple[str, str, Any]] = []
         self._next = 0
 
@@ -113,7 +116,7 @@ class FakeGraph:
             if match.group(3) == "deviceStatusOverview":
                 return {
                     "successCount": 1,
-                    "failedCount": 0,
+                    "failedCount": self.failed.get(str(record.get("displayName")), 0),
                     "errorCount": 0,
                     "pendingCount": 0,
                     "notApplicableCount": 0,
@@ -143,6 +146,8 @@ class FakeGraph:
                 ]
             if part == "assignments":
                 return copy.deepcopy(record["_assignments"])
+            if part == "deviceSettingStateSummaries":
+                return copy.deepcopy(self.setting_summaries.get(str(record.get("displayName")), []))
             if part == "scheduledActionsForRule":
                 # As in the real Graph, which only returns the rules expanded with their policy.
                 raise GraphError(f"GET {path} answered 400 No method match route template", 400, "BadRequest")

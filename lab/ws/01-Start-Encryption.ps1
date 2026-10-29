@@ -6,13 +6,22 @@
 # nothing in the BitLocker log. This stage starts the task, as Microsoft's guide to
 # troubleshooting Intune BitLocker policies says. If it still does not run, the stage turns
 # BitLocker on itself with the policy's settings: XTS-AES 256 and a TPM protector, with a
-# recovery password that is saved in Entra ID before encryption starts. The recovery password is
-# never printed; this output goes to public workflow logs. Safe to run again: it does nothing
-# once C: is encrypted or encrypting.
+# recovery password that is saved in Entra ID before encryption starts. Windows had not taken
+# ownership of the PC's virtual TPM either (Get-Tpm: ready, not owned), so BitLocker refused the
+# TPM protector (0x80310018) until Initialize-Tpm had run. The recovery password is never
+# printed; this output goes to public workflow logs. Safe to run again: once C: is encrypted or
+# encrypting it only asks the PC to sync with Intune, so Intune's encryption report catches up.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 function Write-Step([string]$Message) { Write-Output ('[{0:HH:mm:ss}] {1}' -f (Get-Date), $Message) }
+
+function Sync-Intune {
+    # PushLaunch is the task the Intune enrolment created to check in with Intune.
+    $push = @(Get-ScheduledTask -TaskPath '\Microsoft\Windows\EnterpriseMgmt\*' -TaskName 'PushLaunch' -ErrorAction SilentlyContinue)
+    foreach ($task in $push) { Start-ScheduledTask -InputObject $task }
+    Write-Step $(if ($push.Count) { 'Asked the PC to sync with Intune.' } else { 'No Intune sync task found on the PC.' })
+}
 
 function Wait-Encryption([int]$Minutes) {
     $deadline = (Get-Date).AddMinutes($Minutes)
@@ -25,7 +34,8 @@ function Wait-Encryption([int]$Minutes) {
 
 $volume = Get-BitLockerVolume -MountPoint 'C:'
 if ($volume.VolumeStatus -ne 'FullyDecrypted') {
-    Write-Step ('C: is {0} ({1}% encrypted); nothing to do.' -f $volume.VolumeStatus, $volume.EncryptionPercentage)
+    Write-Step ('C: is {0} ({1}% encrypted), protection {2}.' -f $volume.VolumeStatus, $volume.EncryptionPercentage, $volume.ProtectionStatus)
+    Sync-Intune
     return
 }
 $policy = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\BitLocker' -ErrorAction SilentlyContinue
@@ -97,3 +107,4 @@ if ($problem) { throw $problem }
 if ($volume.VolumeStatus -eq 'FullyDecrypted') {
     throw 'Encryption did not start; see the lines above.'
 }
+Sync-Intune

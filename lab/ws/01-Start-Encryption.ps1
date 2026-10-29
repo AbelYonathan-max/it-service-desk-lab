@@ -1,13 +1,14 @@
 # Stage 1 for the PC: makes sure C: gets the BitLocker encryption that Intune's "KBC - BitLocker"
 # policy asks for. The scheduled task "BitLocker MDM policy Refresh" applies the policy and
-# encrypts the drive, and it should run when the PC syncs with Intune. On the lab PC it had still
-# not run (0x41303, "has not run yet") hours after the policy arrived, and starting it from Run
-# Command did not run it either, so C: stayed unencrypted with nothing in the BitLocker log.
-# This stage starts the task, as Microsoft's guide to troubleshooting Intune BitLocker policies
-# says. If the task still does not run, the stage turns BitLocker on itself with the policy's
-# settings: XTS-AES 256 and a TPM protector, with a recovery password that is saved in Entra ID
-# before encryption starts. The recovery password is never printed; this output goes to public
-# workflow logs. Safe to run again: it does nothing once C: is encrypted or encrypting.
+# encrypts the drive. It runs as INTERACTIVE, in the session of whoever is signed in, and nobody
+# signs in to the lab PC: it had never run (0x41303, "has not run yet") hours after the policy
+# arrived, and starting it from Run Command did not run it either, so C: stayed unencrypted with
+# nothing in the BitLocker log. This stage starts the task, as Microsoft's guide to
+# troubleshooting Intune BitLocker policies says. If it still does not run, the stage turns
+# BitLocker on itself with the policy's settings: XTS-AES 256 and a TPM protector, with a
+# recovery password that is saved in Entra ID before encryption starts. The recovery password is
+# never printed; this output goes to public workflow logs. Safe to run again: it does nothing
+# once C: is encrypted or encrypting.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -42,17 +43,33 @@ Write-Step ('Task "{0}": {1}, runs as {2}{3} (logon type {4}), triggers: {5}, ac
 Start-ScheduledTask -InputObject $task
 $volume = Wait-Encryption -Minutes 2
 
+$problem = $null
 if ($volume.VolumeStatus -eq 'FullyDecrypted') {
     Write-Step ('The task did not start encryption (last result 0x{0:x}). Turning BitLocker on with the policy''s settings.' -f ($task | Get-ScheduledTaskInfo).LastTaskResult)
-    # Warnings are silenced because Add-BitLockerKeyProtector prints the new recovery password in one.
-    if (-not @($volume.KeyProtector | Where-Object KeyProtectorType -EQ 'RecoveryPassword').Count) {
-        $null = Add-BitLockerKeyProtector -MountPoint 'C:' -RecoveryPasswordProtector -WarningAction SilentlyContinue 3>$null
+    try {
+        # Warnings are silenced because Add-BitLockerKeyProtector prints the new recovery password in one.
+        if (-not @($volume.KeyProtector | Where-Object KeyProtectorType -EQ 'RecoveryPassword').Count) {
+            $null = Add-BitLockerKeyProtector -MountPoint 'C:' -RecoveryPasswordProtector -WarningAction SilentlyContinue 3>$null
+        }
+        $recovery = (Get-BitLockerVolume -MountPoint 'C:').KeyProtector | Where-Object KeyProtectorType -EQ 'RecoveryPassword' | Select-Object -First 1
+        $null = BackupToAAD-BitLockerKeyProtector -MountPoint 'C:' -KeyProtectorId $recovery.KeyProtectorId -WarningAction SilentlyContinue 3>$null
+        Write-Step 'Recovery password saved in Entra ID.'
+        # BitLocker's WMI provider, which returns BitLocker's own error codes (Enable-BitLocker only says E_FAIL).
+        $encryptable = Get-CimInstance -Namespace 'root/CIMV2/Security/MicrosoftVolumeEncryption' -ClassName Win32_EncryptableVolume -Filter "DriveLetter = 'C:'"
+        if (-not @((Get-BitLockerVolume -MountPoint 'C:').KeyProtector | Where-Object KeyProtectorType -EQ 'Tpm').Count) {
+            $added = Invoke-CimMethod -InputObject $encryptable -MethodName ProtectKeyWithTPM
+            if ($added.ReturnValue -ne 0) { throw ('Adding the TPM protector failed with 0x{0:x8}.' -f $added.ReturnValue) }
+            Write-Step 'TPM protector added.'
+        }
+        # Encryption method 7 is XTS-AES 256; flag 1 encrypts used space only, as Windows does for new PCs.
+        $started = Invoke-CimMethod -InputObject $encryptable -MethodName Encrypt -Arguments @{ EncryptionMethod = [uint32]7; EncryptionFlags = [uint32]1 }
+        if ($started.ReturnValue -ne 0) { throw ('Starting encryption failed with 0x{0:x8}.' -f $started.ReturnValue) }
+        $volume = Wait-Encryption -Minutes 2
     }
-    $recovery = (Get-BitLockerVolume -MountPoint 'C:').KeyProtector | Where-Object KeyProtectorType -EQ 'RecoveryPassword' | Select-Object -First 1
-    $null = BackupToAAD-BitLockerKeyProtector -MountPoint 'C:' -KeyProtectorId $recovery.KeyProtectorId -WarningAction SilentlyContinue 3>$null
-    Write-Step 'Recovery password saved in Entra ID.'
-    $null = Enable-BitLocker -MountPoint 'C:' -EncryptionMethod XtsAes256 -TpmProtector -UsedSpaceOnly -SkipHardwareTest -WarningAction SilentlyContinue 3>$null
-    $volume = Wait-Encryption -Minutes 2
+    catch {
+        $problem = $_.Exception.Message
+        $volume = Get-BitLockerVolume -MountPoint 'C:'
+    }
 }
 
 Write-Step ('C: {0}, {1}% encrypted, protection {2}, method {3}, key protectors: {4}' -f $volume.VolumeStatus,
@@ -62,6 +79,7 @@ $logged = Get-WinEvent -LogName 'Microsoft-Windows-BitLocker/BitLocker Managemen
 foreach ($entry in $logged) {
     Write-Step ('BitLocker log, {0:HH:mm} event {1}: {2}' -f $entry.TimeCreated, $entry.Id, ($entry.Message -split "`n")[0].Trim())
 }
+if ($problem) { throw $problem }
 if ($volume.VolumeStatus -eq 'FullyDecrypted') {
     throw 'Encryption did not start; see the lines above.'
 }

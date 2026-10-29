@@ -58,8 +58,10 @@ This gives the tenant Intune and Entra ID P1 for a month, free.
 Entra Cloud Sync copies the council's staff accounts from the domain controller to Entra ID. Its
 agent has to be registered by a person signing in interactively (with MFA), so this one is by hand:
 
-1. Azure portal > **vm-dc01** > **Connect** > **Bastion**. Sign in as `sdlab.admin`; the password is
-   in the lab Key Vault (`kv-sdlab-…`) > **Secrets** > `dc01-admin-password`.
+1. Azure portal > **vm-dc01** > **Connect** > **Bastion**. Username `sdlab.admin`, with no `KESTREL\` in
+   front (Bastion passes it on as part of the name). Authentication Type **VM Password from Azure
+   Key Vault**: the lab Key Vault (`kv-sdlab-…`) and the secret `dc01-admin-password`, so nothing is
+   copied by hand. Bastion opens the server in a pop-up window, so allow pop-ups for the portal.
 2. Follow the note **Connect to Microsoft Entra ID** on the desktop.
 3. In GitHub: **Actions** > **Entra and Intune** > **Run workflow** > action `apply` > **Run workflow**.
    It licenses the staff who need Microsoft 365 and applies the Intune policies to the Windows 11 PC.

@@ -258,7 +258,8 @@ jobs:
             echo "| Key Vault | \`${KEY_VAULT:-none}\` |"
             echo "| Region | ${LAB_REGION:-none} |"
             echo
-            echo "Sign in through the Azure portal: the VM > Connect > Bastion. Domain controller: \`KESTREL\\sdlab.admin\`,"
-            echo "password in the Key Vault secret \`dc01-admin-password\`. The VMs shut down at 19:00 UK time every day;"
+            echo "Sign in through the Azure portal: the VM > Connect > Bastion. Domain controller: username \`sdlab.admin\` (no"
+            echo "\`KESTREL\\\` in front), Authentication Type \"VM Password from Azure Key Vault\", secret \`dc01-admin-password\`."
+            echo "The VMs shut down at 19:00 UK time every day;"
             echo "run this workflow with **stop** when you finish, and **start** to carry on."
           } >> "$GITHUB_STEP_SUMMARY"

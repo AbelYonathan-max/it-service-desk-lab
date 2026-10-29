@@ -1,7 +1,8 @@
 name: Lab
 
 # Builds and runs the Azure lab. Run it from the Actions tab (Lab > Run workflow):
-#   deploy   Terraform, then build or update the domain controller (stages 01 to 06) and check the PC
+#   deploy   Terraform, then build or update the domain controller (lab/dc stages 01 to 06) and the PC
+#            (lab/ws), and check both
 #   build    run the build stages again without Terraform (or one stage, named in "stage")
 #   start    start both VMs
 #   stop     stop and deallocate both VMs, so compute stops costing money
@@ -19,7 +20,7 @@ on:
         options: [deploy, build, start, stop, doctor, postpone, destroy]
         default: deploy
       stage:
-        description: With build, run only this stage (for example 03-Build-FileShares)
+        description: With build, run only this stage (for example 03-Build-FileShares, or 01-Start-Encryption for the PC)
         type: string
         default: ""
 
@@ -208,7 +209,14 @@ jobs:
         if: inputs.action == 'deploy' || inputs.action == 'build'
         run: |
           STAGES="01-Install-Forest 02-Build-Directory 03-Build-FileShares 04-Build-GroupPolicy 05-Install-Agent 06-Prepare-CloudSync"
-          if [ -n "$ONLY_STAGE" ]; then STAGES="$ONLY_STAGE"; fi
+          # A stage named in "stage" runs on the VM whose folder holds it: lab/dc or lab/ws.
+          if [ -n "$ONLY_STAGE" ]; then
+            if [ ! -f "lab/dc/$ONLY_STAGE.ps1" ] && [ ! -f "lab/ws/$ONLY_STAGE.ps1" ]; then
+              echo "There is no stage $ONLY_STAGE in lab/dc or lab/ws."
+              exit 1
+            fi
+            if [ -f "lab/dc/$ONLY_STAGE.ps1" ]; then STAGES="$ONLY_STAGE"; else STAGES=""; fi
+          fi
           ARGS=("Repository=$GITHUB_REPOSITORY" "Ref=$GITHUB_SHA" "Role=dc" "KeyVault=$KEY_VAULT")
           if [ -n "$UPN_SUFFIX" ]; then ARGS+=("UpnSuffix=$UPN_SUFFIX"); fi
           for stage in $STAGES; do
@@ -227,6 +235,19 @@ jobs:
               done
               grep -q '^READY' <<<"$status" || { echo "The domain controller did not come back ready."; exit 1; }
             fi
+          done
+
+      - name: Build the PC
+        if: (inputs.action == 'deploy' || inputs.action == 'build') && env.WS_VM != ''
+        run: |
+          STAGES="01-Start-Encryption"
+          if [ -n "$ONLY_STAGE" ]; then
+            if [ -f "lab/ws/$ONLY_STAGE.ps1" ]; then STAGES="$ONLY_STAGE"; else STAGES=""; fi
+          fi
+          for stage in $STAGES; do
+            echo "::group::Stage $stage"
+            infra/scripts/run-on-vm.sh "$WS_VM" lab/Invoke-LabStage.ps1 "Stage=$stage" "Repository=$GITHUB_REPOSITORY" "Ref=$GITHUB_SHA" "Role=ws"
+            echo "::endgroup::"
           done
 
       - name: Check the domain controller

@@ -35,7 +35,7 @@ the Identity and Access team with the reason.
 | `servicenow/config`, `servicenow/scripts` | The ServiceNow configuration and its server-side scripts |
 | `docs/kb` | Knowledge base articles, published to ServiceNow |
 | `lab/config` | The council's departments, shared drives and staff list (builds AD and ServiceNow's users) |
-| `lab/dc`, `lab/ws` | Domain controller build stages, the agent's entry point, health checks |
+| `lab/dc`, `lab/ws` | Build stages for the domain controller and the PC, the agent's entry point, health checks |
 | `lab/intune` | Intune policies: compliance, update ring, BitLocker, Windows LAPS, Defender, device security |
 | `powershell/ServiceDeskLab` | PowerShell module: joiners, movers, leavers, password resets, lockouts, share access, the agent |
 | `infra/terraform`, `infra/bootstrap` | The Azure lab, and the one-off set-up script for Azure Cloud Shell |
@@ -56,7 +56,8 @@ The account steps (ServiceNow developer instance, Azure, Microsoft 365 trial, Cl
 
 The first time, in this order: Lab `deploy` (the set-up script starts it), ServiceNow `apply`,
 `history`, `connect-lab`, then `smoke-test` with "wait for agent" ticked. Once Microsoft 365 and
-Cloud Sync are set up: Entra and Intune `apply`.
+Cloud Sync are set up: Entra and Intune `apply`, then, once the PC has synced with Intune (about 15
+minutes), Lab `build` with stage `01-Start-Encryption` to start BitLocker on the PC.
 
 On your own machine (Python 3.12 or later):
 

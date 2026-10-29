@@ -13,14 +13,15 @@ Directory owns them (powershell/ServiceDeskLab/Public/Sync-LabServiceNowUser.ps1
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
 
 from servicedesk.config import Config
 from servicedesk.kb import load_articles
-from servicedesk.snow import Record, ServiceNow, encode, in_query, quote
+from servicedesk.snow import InstanceAsleepError, Record, ServiceNow, ServiceNowError, encode, in_query, quote
 
 SIMULATED = "correlation_idNOT LIKESIM-^ORcorrelation_idISEMPTY"
 VARIABLE_TYPES = {"yes_no": 1, "multi_line": 2, "select": 5, "single_line": 6, "reference": 8, "date": 9}
@@ -113,7 +114,8 @@ class Applier:
             self.changes.append(Change("create", table, label, sorted(desired)))
             if self.dry_run:
                 return f"(new {table})"
-            created = self.sn.create(table, {**key_values, **desired})
+            with self.explained(label):
+                created = self.sn.create(table, {**key_values, **desired})
             index = self._index.get((table, tuple(key_values)))
             if index is not None:
                 index[tuple(key_values.values())] = {**key_values, **desired, "sys_id": created["sys_id"]}
@@ -138,9 +140,20 @@ class Applier:
             return str(current["sys_id"])
         self.changes.append(Change("update", table, label, sorted(diff)))
         if not self.dry_run:
-            self.sn.update(table, str(current["sys_id"]), diff)
+            with self.explained(label):
+                self.sn.update(table, str(current["sys_id"]), diff)
             current.update(diff)
         return str(current["sys_id"])
+
+    @contextmanager
+    def explained(self, label: str) -> Iterator[None]:
+        """Names the record when ServiceNow refuses a change, as its own message often does not."""
+        try:
+            yield
+        except InstanceAsleepError:
+            raise
+        except ServiceNowError as error:
+            raise ServiceNowError(f"{label}: {error}", error.status) from error
 
     def lookup(self, table: str, query: str, what: str) -> str:
         record = self.sn.first(table, query, fields=["sys_id"])
@@ -223,6 +236,25 @@ def apply_staff(
         ["employee_number"],
         ["user_name", "manager", "active"],
     )
+    # A developer instance comes with demo users, and one of them can hold a user name the HR
+    # extract needs. User names are unique, so that user is renamed and made inactive, keeping its
+    # history, before the council's person is created.
+    staff_ids = {p.employee_id for p in people}
+    by_user_name = {p.user_name.lower(): p for p in people}
+    for user in a.sn.query(
+        "sys_user",
+        in_query("user_name", list(by_user_name)),
+        fields=["sys_id", "user_name", "employee_number"],
+    ):
+        holder = by_user_name.get(str(user.get("user_name", "")).lower())
+        if holder is None or user.get("employee_number") in staff_ids:
+            continue
+        a.ensure(
+            "sys_user",
+            {"sys_id": user["sys_id"]},
+            {"user_name": f"{user['user_name']}.demo", "active": False},
+            label=f"demo user {user['user_name']} renamed for {holder.employee_id} {holder.name}",
+        )
     users: dict[str, str] = {}
     profile_fields = [
         "user_name",

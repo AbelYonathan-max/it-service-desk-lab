@@ -7,7 +7,7 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from servicedesk.snow import Record, encode
+from servicedesk.snow import Record, ServiceNowError, encode
 
 CONDITION = re.compile(
     r"^(?P<field>[\w.]+?)(?P<op>NOT IN|NOT LIKE|ISNOTEMPTY|ISEMPTY|STARTSWITH|IN|LIKE|!=|>=|<=|=|>|<)(?P<value>.*)$"
@@ -102,8 +102,23 @@ class FakeServiceNow:
     def get(self, table: str, sys_id: str, *, fields: Iterable[str] | None = None) -> Record | None:
         return self.first(table, f"sys_id={sys_id}", fields=fields)
 
+    def _check_unique(self, table: str, data: Mapping[str, Any], sys_id: str = "") -> None:
+        """User names are unique, whatever their case, and ServiceNow says little when one is taken."""
+        name = str(data.get("user_name", "")).lower()
+        if table != "sys_user" or not name:
+            return
+        if any(
+            str(r.get("user_name", "")).lower() == name and r["sys_id"] != sys_id
+            for r in self.tables.get(table, [])
+        ):
+            raise ServiceNowError(
+                "POST /api/now/table/sys_user failed (403): Operation Failed. Error during insert of sys_user",
+                403,
+            )
+
     def create(self, table: str, data: Mapping[str, Any], *, display_values: bool = False) -> Record:
         self.requests_made += 1
+        self._check_unique(table, data)
         record = self.add(table, **data)
         self.writes.append(("create", table, dict(record)))
         return dict(record)
@@ -112,6 +127,7 @@ class FakeServiceNow:
         self, table: str, sys_id: str, data: Mapping[str, Any], *, display_values: bool = False
     ) -> Record:
         self.requests_made += 1
+        self._check_unique(table, data, sys_id)
         for record in self.tables.get(table, []):
             if record["sys_id"] == sys_id:
                 record.update({k: encode(v) for k, v in data.items()})

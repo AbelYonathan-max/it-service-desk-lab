@@ -4,7 +4,7 @@ import pytest
 
 from servicedesk.apply import apply_all, catalog_property, duration, same, sla_definitions
 from servicedesk.config import load_config
-from servicedesk.snow import ServiceNow
+from servicedesk.snow import ServiceNow, ServiceNowError
 from tests.fake_servicenow import FakeServiceNow, base_instance, matches
 
 
@@ -86,6 +86,31 @@ def test_staff_records_belong_to_the_ad_sync_once_created(config: Any) -> None:
     assert [(c.table, c.label, c.fields) for c in updates] == [
         ("sys_user", "line manager of E10031", ["manager"])
     ]
+
+
+def test_a_demo_user_with_a_staff_user_name_is_moved_aside(config: Any) -> None:
+    fake = base_instance()
+    demo = fake.add("sys_user", user_name="james.smith", name="James Smith", active=True)
+    plan = run(fake, config, dry_run=True)
+    assert fake.writes == []
+    assert ("sys_user", "demo user james.smith renamed for E10065 James Smith", ["active", "user_name"]) in [
+        (c.table, c.label, c.fields) for c in plan.changes if c.action == "update"
+    ]
+
+    run(fake, config)
+    moved = {**demo, "user_name": "james.smith.demo", "active": "false"}
+    assert fake.get("sys_user", demo["sys_id"]) == moved
+    ours = fake.first("sys_user", "employee_number=E10065")
+    assert ours is not None and ours["user_name"] == "james.smith"
+    again = run(fake, config)
+    assert again.counts["create"] == again.counts["update"] == 0
+
+
+def test_a_refused_record_is_named_in_the_error(config: Any) -> None:
+    fake = base_instance()
+    fake.add("sys_user", user_name="hamza.ali", employee_number="E10003")  # one of the council's, so it stays
+    with pytest.raises(ServiceNowError, match=r"^staff E10002 Hamza Ali: POST .* \(403\)"):
+        run(fake, config)
 
 
 def test_demo_slas_are_switched_off(config: Any) -> None:

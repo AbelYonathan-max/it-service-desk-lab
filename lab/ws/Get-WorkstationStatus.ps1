@@ -75,6 +75,24 @@ if (-not $volume -or $volume.VolumeStatus -ne 'FullyEncrypted') {
     }
 }
 
+Write-Section 'Microsoft Defender'
+# What the compliance policy's anti-malware rules look at: Defender on with real-time protection,
+# an antivirus registered with Windows Security Center, and current security intelligence.
+$defender = Get-MpComputerStatus -ErrorAction SilentlyContinue
+if ($defender) {
+    'Mode {0}, antivirus {1}, real-time protection {2}' -f $defender.AMRunningMode, $defender.AntivirusEnabled, $defender.RealTimeProtectionEnabled
+    'Security intelligence {0}, updated {1:yyyy-MM-dd HH:mm} ({2} day(s) old), out of date {3}' -f $defender.AntivirusSignatureVersion,
+        $defender.AntivirusSignatureLastUpdated, $defender.AntivirusSignatureAge, $defender.DefenderSignaturesOutOfDate
+}
+else {
+    'Defender status not available.'
+}
+$registered = @(Get-CimInstance -Namespace 'root/SecurityCenter2' -ClassName AntiVirusProduct -ErrorAction SilentlyContinue)
+'Registered with Windows Security Center: {0}' -f $(if ($registered.Count) {
+        ($registered | ForEach-Object { '{0} (product state 0x{1:x6})' -f $_.displayName, $_.productState }) -join ', '
+    }
+    else { 'no antivirus' })
+
 Write-Section 'Windows LAPS'
 $laps = Get-WinEvent -LogName 'Microsoft-Windows-LAPS/Operational' -MaxEvents 3 -ErrorAction SilentlyContinue
 if ($laps) {

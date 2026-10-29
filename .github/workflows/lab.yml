@@ -153,6 +153,21 @@ jobs:
           echo "client_sku=${CLIENT_SKU:-win11-25h2-ent}" >> "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
 
+      # Azure only adds or changes a VM extension (the PC's Entra join) while the VM is running.
+      - name: Start existing VMs
+        if: inputs.action == 'deploy'
+        run: |
+          VMS=$(az vm list -g "$LAB_RG" --query "[].name" -o tsv)
+          for vm in $VMS; do
+            state=$(az vm get-instance-view -g "$LAB_RG" -n "$vm" --query "instanceView.statuses[?starts_with(code, 'PowerState/')].displayStatus | [0]" -o tsv)
+            echo "$vm: $state"
+            if [ "$state" != "VM running" ]; then az vm start -g "$LAB_RG" -n "$vm" --no-wait; fi
+          done
+          for vm in $VMS; do
+            az vm wait -g "$LAB_RG" -n "$vm" --custom "instanceView.statuses[?code=='PowerState/running']" --timeout 900
+            echo "$vm is running"
+          done
+
       - name: Terraform apply
         if: inputs.action == 'deploy'
         working-directory: infra/terraform

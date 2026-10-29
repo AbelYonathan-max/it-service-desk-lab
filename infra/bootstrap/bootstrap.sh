@@ -289,9 +289,12 @@ if [ -n "$LICENCES" ]; then
   else
     echo "   could not set automatic enrolment; set it in Entra admin centre > Mobility (MDM and WIP) > Microsoft Intune > MDM user scope: All"
   fi
-  # Windows LAPS: each PC's local admin password is rotated and kept in Entra ID.
-  if az rest --method get --url "$GRAPH/v1.0/policies/deviceRegistrationPolicy" -o json 2>/dev/null |
-    python3 -c 'import json,sys; p=json.load(sys.stdin); p["localAdminPassword"]={"isEnabled":True}; [p.pop(k,None) for k in ("@odata.context","id","displayName","description")]; print(json.dumps(p))' >/tmp/device-reg.json &&
+  # Windows LAPS: each PC's local admin password is rotated and kept in Entra ID. Cloud Shell's sign-in
+  # is not always allowed to read the device policy, so an empty answer falls through to the message.
+  REG_POLICY=$(az rest --method get --url "$GRAPH/v1.0/policies/deviceRegistrationPolicy" -o json 2>/dev/null || true)
+  if [ -n "$REG_POLICY" ] &&
+    python3 -c 'import json,sys; p=json.load(sys.stdin); p["localAdminPassword"]={"isEnabled":True}; [p.pop(k,None) for k in ("@odata.context","id","displayName","description")]; print(json.dumps(p))' \
+      <<<"$REG_POLICY" >/tmp/device-reg.json 2>/dev/null &&
     az rest --method put --url "$GRAPH/v1.0/policies/deviceRegistrationPolicy" \
       --headers "Content-Type=application/json" --body @/tmp/device-reg.json --output none 2>/dev/null; then
     echo "   Windows LAPS in Entra ID: on"

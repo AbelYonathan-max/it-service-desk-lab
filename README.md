@@ -50,7 +50,7 @@ The account steps (ServiceNow developer instance, Azure, Microsoft 365 trial, Cl
 
 | Workflow | Actions |
 |---|---|
-| Lab | `deploy`, `build`, `start`, `stop`, `doctor`, `destroy` |
+| Lab | `deploy`, `build`, `start`, `stop`, `doctor`, `postpone`, `destroy` |
 | ServiceNow | `check`, `plan`, `apply`, `history`, `smoke-test`, `connect-lab`, `report` |
 | Entra and Intune | `plan`, `apply`, `status` |
 

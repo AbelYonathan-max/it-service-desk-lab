@@ -8,6 +8,8 @@
 #   the account to use;
 # - makes sure the domain's administrator signs in with the password in Key Vault
 #   (dc01-admin-password), which Bastion and the agent's wizard both use, and is not locked out;
+# - turns Internet Explorer Enhanced Security Configuration off for administrators until the agent
+#   is installed (it leaves the wizard's sign-in window blank), and back on once it is;
 # - reports whether the agent is already installed and running.
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingConvertToSecureStringWithPlainText', '',
     Justification = 'The administrator password comes from Key Vault, which only returns it as text.')]
@@ -56,6 +58,14 @@ if ($KeyVault) {
     }
     $context.Dispose()
     $password = $null
+}
+
+Write-Step 'Internet Explorer Enhanced Security Configuration for administrators'
+$agentInstalled = [bool](Get-Service -Name AADConnectProvisioningAgent -ErrorAction SilentlyContinue)
+$esc = 'HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components\{A509B1A7-37EF-4b3f-8CFC-4F3A74704073}'
+if (Test-Path $esc) {
+    Set-ItemProperty -Path $esc -Name 'IsInstalled' -Value ([int]$agentInstalled) -Type DWord
+    Write-Step $(if ($agentInstalled) { 'On (the agent is installed).' } else { 'Off until the Cloud Sync agent is installed.' })
 }
 
 Write-Step 'Instructions on the desktop'

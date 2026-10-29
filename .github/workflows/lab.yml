@@ -6,6 +6,7 @@ name: Lab
 #   start    start both VMs
 #   stop     stop and deallocate both VMs, so compute stops costing money
 #   doctor   health report from the domain controller and the PC
+#   postpone move the VMs' automatic shutdown to 22:00 UK time (the next deploy sets it back)
 #   destroy  delete everything Terraform made (the resource groups and the Terraform state stay)
 # It signs in to Azure with OpenID Connect: GitHub issues a short-lived token for this repository's
 # "lab" environment and Azure exchanges it for the deploy identity. No Azure password or key is stored.
@@ -15,7 +16,7 @@ on:
       action:
         description: What to do
         type: choice
-        options: [deploy, build, start, stop, doctor, destroy]
+        options: [deploy, build, start, stop, doctor, postpone, destroy]
         default: deploy
       stage:
         description: With build, run only this stage (for example 03-Build-FileShares)
@@ -243,6 +244,16 @@ jobs:
           for vm in $DC_VM $WS_VM; do
             az vm wait -g "$LAB_RG" -n "$vm" --custom "instanceView.statuses[?code=='PowerState/deallocated']" --timeout 900
             echo "$vm is deallocated"
+          done
+
+      - name: Postpone the automatic shutdown
+        if: inputs.action == 'postpone'
+        # For an evening that runs late. Terraform owns the time (auto_shutdown_time), so the next deploy
+        # puts it back.
+        run: |
+          for id in $(az resource list -g "$LAB_RG" --resource-type Microsoft.DevTestLab/schedules --query "[].id" -o tsv); do
+            az resource update --ids "$id" --set properties.dailyRecurrence.time=2200 -o none
+            echo "${id##*/}: shuts down at 22:00 UK time"
           done
 
       - name: Summary

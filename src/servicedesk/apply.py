@@ -37,11 +37,31 @@ class Change:
     table: str
     label: str
     fields: list[str] = field(default_factory=list)
+    before: dict[str, str] = field(default_factory=dict)  # an update's old and new values
+    after: dict[str, str] = field(default_factory=dict)
 
     def __str__(self) -> str:
         sign = {"create": "+", "update": "~", "delete": "-", "same": "="}[self.action]
         detail = f" ({', '.join(self.fields)})" if self.action == "update" else ""
         return f"{sign} {self.table:<24} {self.label}{detail}"
+
+    def differences(self, width: int = 60) -> list[str]:
+        """What an update would change, field by field: short values whole, long ones where they part."""
+        lines = []
+        for name in self.fields:
+            old, new = self.before.get(name, ""), self.after.get(name, "")
+            if len(old) <= width and len(new) <= width and "\n" not in old + new:
+                lines.append(f"{name}: {old!r} -> {new!r}")
+                continue
+            at = next(
+                (i for i, (x, y) in enumerate(zip(old, new, strict=False)) if x != y), min(len(old), len(new))
+            )
+            start = max(0, at - 20)
+            lines.append(
+                f"{name}: {len(old)} -> {len(new)} characters, first difference at {at}: "
+                f"{old[start : at + 40]!r} -> {new[start : at + 40]!r}"
+            )
+        return lines
 
 
 def same(current: Any, desired: str) -> bool:
@@ -140,7 +160,8 @@ class Applier:
         if not diff:
             self.changes.append(Change("same", table, label))
             return str(current["sys_id"])
-        self.changes.append(Change("update", table, label, sorted(diff)))
+        before = {name: "" if current.get(name) is None else str(current.get(name)) for name in diff}
+        self.changes.append(Change("update", table, label, sorted(diff), before, dict(diff)))
         if not self.dry_run:
             with self.explained(label):
                 self.sn.update(table, str(current["sys_id"]), diff)

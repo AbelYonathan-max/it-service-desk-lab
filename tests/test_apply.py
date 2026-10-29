@@ -3,7 +3,7 @@ from typing import Any, cast
 
 import pytest
 
-from servicedesk.apply import apply_all, catalog_property, duration, same, sla_definitions
+from servicedesk.apply import Change, apply_all, catalog_property, duration, same, sla_definitions
 from servicedesk.config import load_config
 from servicedesk.snow import ServiceNow, ServiceNowError
 from tests.fake_servicenow import FakeServiceNow, base_instance, matches
@@ -73,6 +73,17 @@ def test_apply_puts_back_a_setting_changed_by_hand(config: Any) -> None:
     result = run(fake, config)
     updates = [c for c in result.changes if c.action == "update"]
     assert [(c.table, c.fields) for c in updates] == [("sys_user_group", ["description"])]
+    [difference] = updates[0].differences()
+    assert difference.startswith("description: 21 -> ") and "'edited in the browser' -> " in difference
+
+
+def test_a_long_difference_shows_where_the_values_part() -> None:
+    change = Change(
+        "update", "kb_knowledge", "article", ["text"], {"text": "a" * 100 + "b"}, {"text": "a" * 100 + "c"}
+    )
+    assert change.differences() == [
+        "text: 101 -> 101 characters, first difference at 100: 'aaaaaaaaaaaaaaaaaaaab' -> 'aaaaaaaaaaaaaaaaaaaac'"
+    ]
 
 
 def test_staff_records_belong_to_the_ad_sync_once_created(config: Any) -> None:

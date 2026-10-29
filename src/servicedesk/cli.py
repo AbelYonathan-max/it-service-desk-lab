@@ -61,6 +61,9 @@ def cmd_apply(args: argparse.Namespace) -> int:
     changed = [c for c in result.changes if c.action != "same"]
     for change in changed:
         print(change)
+        if dry_run:
+            for difference in change.differences():
+                print(f"      {difference}")
     counts = result.counts
     verb = "Would create" if dry_run else "Created"
     line = (

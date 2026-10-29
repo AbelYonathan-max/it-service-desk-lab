@@ -57,7 +57,21 @@ if ($volume.VolumeStatus -eq 'FullyDecrypted') {
         # BitLocker's WMI provider, which returns BitLocker's own error codes (Enable-BitLocker only says E_FAIL).
         $encryptable = Get-CimInstance -Namespace 'root/CIMV2/Security/MicrosoftVolumeEncryption' -ClassName Win32_EncryptableVolume -Filter "DriveLetter = 'C:'"
         if (-not @((Get-BitLockerVolume -MountPoint 'C:').KeyProtector | Where-Object KeyProtectorType -EQ 'Tpm').Count) {
+            $tpm = Get-Tpm
+            Write-Step ('TPM: ready {0}, owned {1}, enabled {2}, activated {3}, auto-provisioning {4}, locked out {5}, restart pending {6}' -f
+                $tpm.TpmReady, $tpm.TpmOwned, $tpm.TpmEnabled, $tpm.TpmActivated, $tpm.AutoProvisioning, $tpm.LockedOut, $tpm.RestartPending)
+            foreach ($entry in Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-TPM-WMI' } -MaxEvents 4 -ErrorAction SilentlyContinue) {
+                Write-Step ('TPM log, {0:yyyy-MM-dd HH:mm} event {1}: {2}' -f $entry.TimeCreated, $entry.Id, ($entry.Message -split "`n")[0].Trim())
+            }
             $added = Invoke-CimMethod -InputObject $encryptable -MethodName ProtectKeyWithTPM
+            # 2150694936 is 0x80310018, BitLocker's "the TPM must be initialised first" (written in decimal because
+            # Windows PowerShell reads 0x80310018 as a negative number): provision it, never clearing it, and try again.
+            if ($added.ReturnValue -eq 2150694936) {
+                $initialised = Initialize-Tpm -AllowClear:$false -AllowPhysicalPresence:$false
+                Write-Step ('BitLocker says the TPM is not initialised. Initialize-Tpm: ready {0}, restart required {1}, clear required {2}' -f
+                    $initialised.TpmReady, $initialised.RestartRequired, $initialised.ClearRequired)
+                $added = Invoke-CimMethod -InputObject $encryptable -MethodName ProtectKeyWithTPM
+            }
             if ($added.ReturnValue -ne 0) { throw ('Adding the TPM protector failed with 0x{0:x8}.' -f $added.ReturnValue) }
             Write-Step 'TPM protector added.'
         }

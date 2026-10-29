@@ -103,7 +103,8 @@ def choice_value(entry: dict[str, Any]) -> str:
 
 
 def setting_instance(entry: dict[str, Any]) -> dict[str, Any]:
-    """A setting in the short form (id plus choice, integer or string) as a Graph setting instance."""
+    """A setting in the short form (id plus choice, integer, string or strings) as a Graph setting
+    instance. ``strings`` is for the settings the catalogue keeps as a list of text values."""
     setting_id = entry["id"]
     if "choice" in entry:
         return {
@@ -114,6 +115,14 @@ def setting_instance(entry: dict[str, Any]) -> dict[str, Any]:
                 "value": choice_value(entry),
                 "children": [setting_instance(child) for child in entry.get("children", [])],
             },
+        }
+    if "strings" in entry:
+        return {
+            "@odata.type": f"{SETTING}SimpleSettingCollectionInstance",
+            "settingDefinitionId": setting_id,
+            "simpleSettingCollectionValue": [
+                {"@odata.type": f"{SETTING}StringSettingValue", "value": value} for value in entry["strings"]
+            ],
         }
     kind, value = ("Integer", entry["integer"]) if "integer" in entry else ("String", entry["string"])
     return {
@@ -127,15 +136,18 @@ def _check_short_form(entries: Any, where: str) -> None:
     if not isinstance(entries, list) or not entries:
         raise ValueError(f"{where}: settings must be a list.")
     for entry in entries:
-        kinds = [k for k in ("choice", "integer", "string") if k in entry]
+        kinds = [k for k in ("choice", "integer", "string", "strings") if k in entry]
         if not isinstance(entry.get("id"), str) or len(kinds) != 1:
             raise ValueError(
-                f"{where}: each setting needs an id and one of choice, integer or string: {entry}"
+                f"{where}: each setting needs an id and one of choice, integer, string or strings: {entry}"
             )
         if entry["id"] != entry["id"].lower():
             raise ValueError(f"{where}: setting IDs are lower case: {entry['id']}")
         if "integer" in entry and not isinstance(entry["integer"], int):
             raise ValueError(f"{where}: {entry['id']} needs a whole number.")
+        strings = entry.get("strings", [""])
+        if not isinstance(strings, list) or not strings or not all(isinstance(v, str) for v in strings):
+            raise ValueError(f"{where}: {entry['id']} needs a list of text for strings.")
         if "children" in entry:
             if "choice" not in entry:
                 raise ValueError(f"{where}: only a choice setting can have children: {entry['id']}")
@@ -246,6 +258,9 @@ def check_settings(graph: Graph, policies: list[Policy]) -> list[str]:
                 problems.append(f"{where}: {setting_id} must be between {low} and {high}.")
         elif "String" not in value_type(found):
             problems.append(f"{where}: {setting_id} does not take text.")
+        elif ("strings" in entry) != ("Collection" in odata):
+            needs = "a list of text (strings)" if "Collection" in odata else "a single text (string)"
+            problems.append(f"{where}: {setting_id} takes {needs}.")
         # A child has to be one of the settings that the chosen option brings with it.
         children: list[str] = []
         for option in options if "choice" in entry else []:
@@ -293,6 +308,9 @@ def _instance_key(instance: dict[str, Any]) -> tuple[str, str, tuple[Any, ...]]:
     simple = instance.get("simpleSettingValue")
     if simple:
         return setting_id, json.dumps(simple.get("value")), ()
+    collection = instance.get("simpleSettingCollectionValue")
+    if collection is not None:
+        return setting_id, json.dumps([v.get("value") for v in collection]), ()
     return setting_id, json.dumps(instance, sort_keys=True), ()
 
 

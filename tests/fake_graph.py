@@ -18,6 +18,7 @@ DM = "/beta/deviceManagement/"
 COLLECTIONS = ("deviceCompliancePolicies", "deviceConfigurations", "configurationPolicies")
 CHOICE_DEFINITION = "#microsoft.graph.deviceManagementConfigurationChoiceSettingDefinition"
 SIMPLE_DEFINITION = "#microsoft.graph.deviceManagementConfigurationSimpleSettingDefinition"
+COLLECTION_DEFINITION = "#microsoft.graph.deviceManagementConfigurationSimpleSettingCollectionDefinition"
 VALUE_DEFINITION = "#microsoft.graph.deviceManagementConfiguration{}SettingValueDefinition"
 
 
@@ -40,7 +41,7 @@ def catalogue_for(policies: list[Policy]) -> dict[str, dict[str, Any]]:
             if kind == "Integer":
                 value.update(minimumValue=1, maximumValue=100000)
             catalogue[setting_id] = {
-                "@odata.type": SIMPLE_DEFINITION,
+                "@odata.type": COLLECTION_DEFINITION if "strings" in entry else SIMPLE_DEFINITION,
                 "id": setting_id,
                 "valueDefinition": value,
             }

@@ -15,10 +15,12 @@ settings:
   - id: device_vendor_msft_policy_config_localpoliciessecurityoptions_interactivelogon_messagetitleforusersattemptingtologon
     string: Kestrel Borough Council
   - id: device_vendor_msft_policy_config_localpoliciessecurityoptions_interactivelogon_messagetextforusersattemptingtologon
-    # Word for word the notice the Group Policy baseline shows on domain-joined PCs (lab/dc/04).
-    string: >-
-      This system is for authorised council use only. Activity is monitored and logged. Report
-      suspected misuse to the IT service desk.
+    # Word for word the notice the Group Policy baseline shows on domain-joined PCs (lab/dc/04). The
+    # catalogue keeps this one as a list of lines.
+    strings:
+      - >-
+        This system is for authorised council use only. Activity is monitored and logged. Report
+        suspected misuse to the IT service desk.
   - id: device_vendor_msft_policy_config_experience_allowwindowsconsumerfeatures
     choice: 0
   - id: device_vendor_msft_policy_config_storage_removablediskdenywriteaccess

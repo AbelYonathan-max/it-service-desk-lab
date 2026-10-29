@@ -10,7 +10,14 @@ from servicedesk.entra import BUSINESS_PREMIUM, license_group, tenant_status
 from servicedesk.graph import Graph, GraphError, odata_quote, token_from_azure_cli
 from servicedesk.intune import Intune, IntuneError, Policy, load_policies, settings_key
 from servicedesk.people import REPO_ROOT
-from tests.fake_graph import CHOICE_DEFINITION, SIMPLE_DEFINITION, VALUE_DEFINITION, FakeGraph, catalogue_for
+from tests.fake_graph import (
+    CHOICE_DEFINITION,
+    COLLECTION_DEFINITION,
+    SIMPLE_DEFINITION,
+    VALUE_DEFINITION,
+    FakeGraph,
+    catalogue_for,
+)
 
 LICENCE_GROUP = "GG-LIC-M365-BusinessPremium"
 
@@ -95,6 +102,10 @@ def test_a_compliance_policy_carries_its_grace_period(policies: list[Policy]) ->
             "    children:\n      - id: b\n        choice: 1\n",
             "only a choice",
         ),
+        (
+            "kind: settings\nname: x\nassign: all devices\nsettings:\n  - id: a\n    strings: text\n",
+            "list of text",
+        ),
         ("kind: compliance\nname: x\nassign: all devices\nproperties: {}\n", "@odata.type"),
     ],
 )
@@ -124,6 +135,10 @@ RECOVERY = "device_vendor_msft_bitlocker_systemdrivesrecoveryoptions"
 INACTIVITY = (
     "device_vendor_msft_policy_config_localpoliciessecurityoptions_interactivelogon_machineinactivitylimit"
 )
+NOTICE = (
+    "device_vendor_msft_policy_config_localpoliciessecurityoptions_"
+    "interactivelogon_messagetextforusersattemptingtologon"
+)
 
 
 def test_catalogue_mismatches_name_the_setting_to_use(tmp_path: Path) -> None:
@@ -142,6 +157,8 @@ settings:
         choice: 1
   - id: {INACTIVITY}
     integer: 900
+  - id: {NOTICE}
+    string: Authorised use only.
 """,
         encoding="utf-8",
     )
@@ -164,6 +181,10 @@ settings:
                 "@odata.type": SIMPLE_DEFINITION,
                 "valueDefinition": {"@odata.type": VALUE_DEFINITION.format("Integer")},
             },
+            NOTICE: {
+                "@odata.type": COLLECTION_DEFINITION,
+                "valueDefinition": {"@odata.type": VALUE_DEFINITION.format("String")},
+            },
         }
     )
     with pytest.raises(IntuneError) as error:
@@ -176,6 +197,7 @@ settings:
     siblings = f"The option above it has these settings: {RECOVERY}_osallowdra_name."
     assert f"_ostypo is not in this tenant's settings catalog. {siblings}" in text
     assert f"{INACTIVITY} does not take a whole number. {INACTIVITY}_v2 does." in text
+    assert f"{NOTICE} takes a list of text (strings)." in text
 
 
 def test_apply_creates_everything_once(policies: list[Policy]) -> None:
@@ -407,5 +429,5 @@ def test_intune_and_group_policy_agree(policies: list[Policy]) -> None:
     def setting(name: str) -> dict[str, Any]:
         return next(s for p in policies for s in p.settings if f"_{name}" in s["id"])
 
-    assert setting("messagetextforusersattemptingtologon")["string"] == notice.group(1)
+    assert setting("messagetextforusersattemptingtologon")["strings"] == [notice.group(1)]
     assert setting("machineinactivitylimit")["integer"] == int(timeout.group(1))

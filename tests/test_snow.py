@@ -98,6 +98,29 @@ def test_errors_carry_servicenows_message(sn: ServiceNow) -> None:
 
 
 @respx.mock
+def test_instance_info_names_the_installed_build(sn: ServiceNow) -> None:
+    respx.get(f"{BASE}/api/now/table/sys_user").mock(
+        return_value=httpx.Response(200, json={"result": [{"sys_id": "1", "name": "System Administrator"}]})
+    )
+    properties = respx.get(f"{BASE}/api/now/table/sys_properties")
+    properties.mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "result": [
+                    {"name": "com.glide.embedded_help.version", "value": "brazil"},
+                    {"name": "glide.war", "value": "glide-brazil-08-12-2026__patch0.zip"},
+                ]
+            },
+        )
+    )
+    assert sn.instance_info() == {"user": "System Administrator", "build": "glide-brazil-08-12-2026__patch0"}
+
+    properties.mock(return_value=httpx.Response(200, json={"result": []}))
+    assert sn.instance_info()["build"] == "unknown"
+
+
+@respx.mock
 def test_wrong_password(sn: ServiceNow) -> None:
     respx.get(f"{BASE}/api/now/table/sys_user").mock(return_value=httpx.Response(401, json={"error": {}}))
     with pytest.raises(ServiceNowError, match="refused the user name or password"):

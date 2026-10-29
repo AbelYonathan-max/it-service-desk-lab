@@ -23,6 +23,9 @@ Record = dict[str, Any]
 
 RETRY_STATUS = {429, 500, 502, 503, 504}
 PAGE_SIZE = 500
+# Properties naming the instance's build, best first. glide.war names the one installed; a new
+# developer instance had no glide.buildtag.last.
+RELEASE_PROPERTIES = ("glide.war", "glide.buildtag.last", "com.glide.embedded_help.version")
 HOST_NAME = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$")
 # What getaddrinfo says, on Linux, macOS and Windows, when a host name does not exist.
 NO_SUCH_HOST = (
@@ -304,12 +307,18 @@ class ServiceNow:
         return {"sys_id": sys_id, "number": number}
 
     def instance_info(self) -> Record:
-        """Who we are signed in as, and the instance's release (from the glide.buildtag property)."""
+        """Who we are signed in as, and the instance's release (from the first build property it has)."""
         user = self.first(
             "sys_user", f"user_name={quote(self.connection.username)}", fields=["sys_id", "name"]
         )
-        build = self.first("sys_properties", "name=glide.buildtag.last", fields=["value"])
+        found = {
+            str(row.get("name")): str(row.get("value") or "")
+            for row in self.query(
+                "sys_properties", in_query("name", RELEASE_PROPERTIES), fields=["name", "value"]
+            )
+        }
+        build = next((found[name] for name in RELEASE_PROPERTIES if found.get(name)), "unknown")
         return {
             "user": (user or {}).get("name", self.connection.username),
-            "build": (build or {}).get("value", "unknown"),
+            "build": build.removesuffix(".zip"),
         }

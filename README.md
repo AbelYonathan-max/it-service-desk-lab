@@ -74,7 +74,10 @@ The account steps (ServiceNow developer instance, Azure, Microsoft 365 trial, Cl
 The first time, in this order: Lab `deploy` (the set-up script starts it), ServiceNow `apply`,
 `history`, `connect-lab`, then `smoke-test` with "wait for agent" ticked. Once Microsoft 365 and
 Cloud Sync are set up: Entra and Intune `apply`, then, once the PC has synced with Intune (about 15
-minutes), Lab `build` with stage `01-Start-Encryption` to start BitLocker on the PC.
+minutes), Lab `build` with stage `01-Start-Encryption` to start BitLocker on the PC. When it has
+finished, Lab `stop` and `start`: Intune's compliance check reads BitLocker's state only when the PC
+starts. After the VMs have been off for a while, Lab `build` with stage `02-Update-Defender` brings
+Defender's security intelligence up to date, which the compliance policy also checks.
 
 On your own machine (Python 3.12 or later):
 

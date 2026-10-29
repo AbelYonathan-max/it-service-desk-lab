@@ -240,7 +240,7 @@ jobs:
       - name: Build the PC
         if: (inputs.action == 'deploy' || inputs.action == 'build') && env.WS_VM != ''
         run: |
-          STAGES="01-Start-Encryption"
+          STAGES="01-Start-Encryption 02-Update-Defender"
           if [ -n "$ONLY_STAGE" ]; then
             if [ -f "lab/ws/$ONLY_STAGE.ps1" ]; then STAGES="$ONLY_STAGE"; else STAGES=""; fi
           fi

@@ -9,6 +9,10 @@ from typing import Any
 
 from servicedesk.snow import Record, ServiceNowError, encode
 
+# What the instance fills in itself when a record is created.
+DEFAULTS = {"kb_knowledge": {"workflow_state": "draft"}}
+JOB_ARTICLES = re.compile(r"addQuery\('sys_id', 'IN', '([^']*)'\)")
+
 CONDITION = re.compile(
     r"^(?P<field>[\w.]+?)(?P<op>NOT IN|NOT LIKE|ISNOTEMPTY|ISEMPTY|STARTSWITH|IN|LIKE|!=|>=|<=|=|>|<)(?P<value>.*)$"
 )
@@ -119,9 +123,22 @@ class FakeServiceNow:
     def create(self, table: str, data: Mapping[str, Any], *, display_values: bool = False) -> Record:
         self.requests_made += 1
         self._check_unique(table, data)
-        record = self.add(table, **data)
+        record = self.add(table, **{**DEFAULTS.get(table, {}), **data})
         self.writes.append(("create", table, dict(record)))
+        if table == "sysauto_script":
+            self._run_publish_job(str(data.get("script", "")))
         return dict(record)
+
+    def _run_publish_job(self, script: str) -> None:
+        """The scheduler, which runs the one job apply starts (publish_knowledge.js) straight away."""
+        found = JOB_ARTICLES.search(script)
+        for article in self.tables.get("kb_knowledge", []):
+            if (
+                found
+                and article["sys_id"] in found[1].split(",")
+                and article["workflow_state"] in ("draft", "review")
+            ):
+                article["workflow_state"] = "published"
 
     def update(
         self, table: str, sys_id: str, data: Mapping[str, Any], *, display_values: bool = False

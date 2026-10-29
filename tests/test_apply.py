@@ -31,6 +31,14 @@ def test_same_ignores_line_endings_and_trailing_spaces() -> None:
     assert same(None, "")
 
 
+def test_html_is_compared_as_the_instance_stores_it() -> None:
+    stored = "<p>It&#39;s &#34;done&#34;</p><ol><li>One</li><li>Two</li></ol>"
+    sent = '<p>It\'s "done"</p>\n<ol>\n<li>One</li>\n<li>Two</li>\n</ol>'
+    assert same(stored, sent, html=True)
+    assert not same(stored, sent)
+    assert not same(stored, sent.replace("Two", "Three"), html=True)
+
+
 def test_fake_reads_encoded_queries() -> None:
     record = {"a": "1", "b": "", "c": "SIM-1"}
     assert matches(record, "a=1^bISEMPTY")
@@ -62,6 +70,29 @@ def test_apply_builds_everything_then_finds_nothing_to_do(config: Any) -> None:
     second = run(fake, config)
     assert second.counts["create"] == 0
     assert second.counts["update"] == 0, [str(c) for c in second.changes if c.action != "same"]
+
+
+def test_articles_are_published_by_a_one_off_job(config: Any) -> None:
+    fake = base_instance()
+    plan = run(fake, config, dry_run=True)
+    publishing = [c for c in plan.changes if c.table == "kb_knowledge" and c.fields == ["workflow_state"]]
+    assert len(publishing) == plan.articles
+
+    run(fake, config)
+    assert {a["workflow_state"] for a in fake.tables["kb_knowledge"]} == {"published"}
+    assert [(action, table) for action, table, _ in fake.writes if table == "sysauto_script"] == [
+        ("create", "sysauto_script"),
+        ("delete", "sysauto_script"),
+    ]
+    assert fake.tables["sysauto_script"] == []
+
+    # The instance's sanitiser rewrites the HTML; that is not a change to put back.
+    article = fake.tables["kb_knowledge"][0]
+    sanitised = article["text"].replace("'", "&#39;").replace(">\n<", "><")
+    assert sanitised != article["text"]
+    article["text"] = sanitised
+    again = run(fake, config)
+    assert again.counts["update"] == 0, [str(c) for c in again.changes if c.action != "same"]
 
 
 def test_apply_puts_back_a_setting_changed_by_hand(config: Any) -> None:

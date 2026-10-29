@@ -13,10 +13,13 @@ Directory owns them (powershell/ServiceDeskLab/Public/Sync-LabServiceNowUser.ps1
 from __future__ import annotations
 
 import json
+import re
+import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
+from html import unescape
 from typing import Any
 
 from servicedesk.config import Config
@@ -28,6 +31,9 @@ VARIABLE_TYPES = {"yes_no": 1, "multi_line": 2, "select": 5, "single_line": 6, "
 STAFF_QUALIFIER = "active=true^employee_numberSTARTSWITHE"
 DEFAULT_SLA_FLOW = "Default SLA flow"
 SLA_PREFIX = "Kestrel "
+# Fields the instance keeps as sanitised HTML: it escapes quotes and drops line breaks between tags.
+HTML_FIELDS = {("kb_knowledge", "text"), ("sc_cat_item", "description")}
+PUBLISH_JOB = "Kestrel - publish knowledge articles"
 SLA_NAME_LENGTH = 40  # what contract_sla.name holds: ServiceNow cuts a longer name off without a word
 
 
@@ -64,13 +70,16 @@ class Change:
         return lines
 
 
-def same(current: Any, desired: str) -> bool:
-    """Compares a stored value with the wanted one, ignoring line endings and trailing spaces."""
+def same(current: Any, desired: str, *, html: bool = False) -> bool:
+    """Compares a stored value with the wanted one, ignoring line endings and trailing spaces, and
+    for HTML what the instance's sanitiser changes (escaped quotes, line breaks between tags)."""
     have = "" if current is None else str(current)
     if have == desired:
         return True
 
     def tidy(text: str) -> str:
+        if html:
+            text = re.sub(r">\s+<", "><", unescape(text))
         return "\n".join(line.rstrip() for line in text.replace("\r\n", "\n").strip().split("\n"))
 
     return tidy(have) == tidy(desired)
@@ -154,7 +163,7 @@ class Applier:
             name: value
             for name, value in desired.items()
             if name not in skip
-            and not same(current.get(name), value)
+            and not same(current.get(name), value, html=(table, name) in HTML_FIELDS)
             and not (name in fill and str(current.get(name) or ""))
         }
         if not diff:
@@ -487,24 +496,85 @@ def apply_knowledge(a: Applier, config: Config, users: dict[str, str]) -> int:
             ["kb_knowledge_base", "short_description"],
             ["text", "kb_category", "workflow_state", "meta", "valid_to"],
         )
+    unpublished: dict[str, str] = {}  # title -> state
     for article in articles:
         if article.category not in categories:
             raise ValueError(f"docs/kb/{article.slug}.md: unknown category {article.category!r}.")
-        a.ensure(
+        sys_id = a.ensure(
             "kb_knowledge",
             {"kb_knowledge_base": kb_id, "short_description": article.title},
             {
                 "kb_category": categories[article.category],
                 "text": article.html,
                 "meta": article.keywords,
-                "workflow_state": "published",
                 "valid_to": "2100-01-01",
                 "author": users[base["owner"]],
             },
             label=f"article {article.title}",
             create_only=["author"],
         )
+        if sys_id.startswith("(new "):
+            unpublished[article.title] = "draft"
+    drafts: list[str] = []
+    if not kb_id.startswith("(new "):
+        titles = {article.title for article in articles}
+        for record in a.sn.query(
+            "kb_knowledge",
+            f"kb_knowledge_base={kb_id}^workflow_stateINdraft,review",
+            fields=["sys_id", "short_description", "workflow_state"],
+        ):
+            if record["short_description"] in titles:
+                unpublished[record["short_description"]] = record["workflow_state"]
+                drafts.append(record["sys_id"])
+    for title, state in unpublished.items():
+        a.changes.append(
+            Change(
+                "update",
+                "kb_knowledge",
+                f"article {title}",
+                ["workflow_state"],
+                {"workflow_state": state},
+                {"workflow_state": "published"},
+            )
+        )
+    if drafts and not a.dry_run:
+        publish_articles(a.sn, config, drafts)
     return len(articles)
+
+
+def publish_articles(
+    sn: ServiceNow,
+    config: Config,
+    article_ids: list[str],
+    *,
+    timeout: float = 300,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Publishes draft articles with a one-off scheduled job (servicenow/scripts/publish_knowledge.js),
+    waits until they are published, then deletes the job."""
+    ids = ",".join(article_ids)
+    job = sn.create(
+        "sysauto_script",
+        {
+            "name": PUBLISH_JOB,
+            "script": config.script("publish_knowledge.js").replace("ARTICLE_IDS", ids),
+            "run_type": "once",
+            "run_start": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+            "active": True,
+        },
+    )
+    try:
+        waited = 0.0
+        while sn.query("kb_knowledge", f"sys_idIN{ids}^workflow_stateINdraft,review", fields=["sys_id"]):
+            if waited >= timeout:
+                raise ServiceNowError(
+                    f"The instance has not run the scheduled job {PUBLISH_JOB!r} in {timeout / 60:.0f} minutes. "
+                    "Errors from the job are in the instance's system log."
+                )
+            sleep(5)
+            waited += 5
+    finally:
+        sn.delete("sysauto_script", str(job["sys_id"]))
 
 
 def _choices(config: Config, spec: Any) -> list[tuple[str, str]]:

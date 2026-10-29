@@ -8,7 +8,7 @@ script_includes:
 business_rules:
   - name: Kestrel - request approvals
     table: sc_req_item
-    when: async
+    when: async_always # an async rule that also runs during upgrades; the instance stores async this way
     insert: true
     order: 100
     file: request_approvals.js

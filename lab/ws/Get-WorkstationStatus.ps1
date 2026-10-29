@@ -40,6 +40,27 @@ if ($volume) {
 else {
     'BitLocker status not available.'
 }
+# Until C: is encrypted: what silent encryption needs (a ready TPM, the Windows Recovery
+# Environment), what BitLocker last logged, and any BitLocker setting the PC refused.
+if (-not $volume -or $volume.VolumeStatus -ne 'FullyEncrypted') {
+    $tpm = Get-Tpm -ErrorAction SilentlyContinue
+    if ($tpm) { 'TPM: present {0}, ready {1}' -f $tpm.TpmPresent, $tpm.TpmReady }
+    $winre = @(& reagentc.exe /info 2>&1) | Where-Object { "$_" -match 'Windows RE status' } | Select-Object -First 1
+    if ($winre) { "$winre".Trim() }
+    $logged = @(Get-WinEvent -LogName 'Microsoft-Windows-BitLocker/BitLocker Management' -MaxEvents 6 -ErrorAction SilentlyContinue)
+    if (-not $logged.Count) { 'BitLocker log: nothing yet.' }
+    foreach ($entry in $logged) {
+        '{0:yyyy-MM-dd HH:mm} {1} {2}: {3}' -f $entry.TimeCreated, $entry.LevelDisplayName, $entry.Id, ($entry.Message -split "`n")[0].Trim()
+    }
+    $refused = @(Get-WinEvent -LogName 'Microsoft-Windows-DeviceManagement-Enterprise-Diagnostics-Provider/Admin' -FilterXPath '*[System[Level=2]]' -MaxEvents 50 -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -match 'CSP URI: \(([^)]*BitLocker[^)]*)\)' })
+    foreach ($entry in $refused | Select-Object -First 4) {
+        $null = $entry.Message -match 'CSP URI: \(([^)]*)\)'
+        $uri = $Matches[1]
+        $result = if ($entry.Message -match 'Result: \((.*)\)') { $Matches[1] } else { 'no result given' }
+        '{0:yyyy-MM-dd HH:mm} setting refused: {1}: {2}' -f $entry.TimeCreated, $uri, $result
+    }
+}
 
 Write-Section 'Windows LAPS'
 $laps = Get-WinEvent -LogName 'Microsoft-Windows-LAPS/Operational' -MaxEvents 3 -ErrorAction SilentlyContinue

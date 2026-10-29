@@ -52,11 +52,25 @@ foreach ($task in $tasks) {
     $last = if ($info.LastTaskResult -eq 267011) { 'not run yet' } else { 'last run {0:yyyy-MM-dd HH:mm} (result {1})' -f $info.LastRunTime, $info.LastTaskResult }
     '{0}: {1}, {2}, next {3:yyyy-MM-dd HH:mm}' -f $task.TaskName, $task.State, $last, $info.NextRunTime
 }
-$log = Get-ChildItem 'C:\ProgramData\ServiceDeskLab\logs' -Filter 'fulfilment-*.log' -ErrorAction SilentlyContinue |
+$logs = 'C:\ProgramData\ServiceDeskLab\logs'
+$log = Get-ChildItem $logs -Filter 'fulfilment-*.log' -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ($log) {
-    "Last lines of $($log.Name):"
-    Get-Content $log.FullName -Tail 12
+    # Every run's transcript opens and closes with a block about PowerShell itself; only the rest is news.
+    $boilerplate = '^(\*+$|Windows PowerShell transcript (start|end)|(Start|End) time:|Username:|RunAs User:|Configuration Name:|Machine:|Host Application:|Process ID:|PS\w+:|BuildVersion:|CLRVersion:|WSManStackVersion:|SerializationVersion:)'
+    $printed = @(Get-Content $log.FullName | Where-Object { $_.Trim() -and $_ -notmatch $boilerplate })
+    "What the runs in $($log.Name) printed (last lines):"
+    if ($printed.Count) { $printed | Select-Object -Last 12 } else { 'Nothing: no approved task has been waiting today.' }
+}
+$audit = Get-ChildItem $logs -Filter 'audit-*.jsonl' -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ($audit) {
+    "Last entries in $($audit.Name):"
+    foreach ($line in Get-Content $audit.FullName -Tail 8) {
+        $entry = $line | ConvertFrom-Json
+        $problem = if ($entry.detail.error) { ": $($entry.detail.error)" } else { '' }
+        '{0} {1} {2} ({3}){4}' -f $entry.time, $entry.action, $entry.target, $entry.reference, $problem
+    }
 }
 
 Write-Section 'Microsoft Entra Cloud Sync agent'

@@ -6,7 +6,12 @@
 # - turns on TLS 1.2 for .NET (a Cloud Sync prerequisite);
 # - puts "Connect to Microsoft Entra ID.txt" on the desktop with the exact steps, the OU to sync and
 #   the account to use;
+# - makes sure the domain's administrator signs in with the password in Key Vault
+#   (dc01-admin-password), which Bastion and the agent's wizard both use, and is not locked out;
 # - reports whether the agent is already installed and running.
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingConvertToSecureStringWithPlainText', '',
+    Justification = 'The administrator password comes from Key Vault, which only returns it as text.')]
+param([string]$KeyVault = '')
 . (Join-Path $PSScriptRoot 'Common.ps1')
 Import-Module ActiveDirectory
 Import-LabModule
@@ -26,8 +31,34 @@ foreach ($side in 'Client', 'Server') {
     Set-ItemProperty -Path $key -Name 'DisabledByDefault' -Value 0 -Type DWord
 }
 
+Write-Step 'Administrator password'
+$adminUser = Get-ADUser -Filter "objectSid -eq '$($domain.DomainSID.Value)-500'" -Properties LockedOut
+$admin = $adminUser.SamAccountName
+if ($adminUser.LockedOut) {
+    Unlock-ADAccount -Identity $adminUser
+    Write-Step "$admin was locked out: unlocked."
+}
+if ($KeyVault) {
+    $password = Get-VaultSecret -VaultName $KeyVault -Name 'dc01-admin-password'
+    if (-not $password) { throw "Key Vault $KeyVault has no dc01-admin-password secret." }
+    Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+    $context = New-Object System.DirectoryServices.AccountManagement.PrincipalContext('Domain', $domain.DNSRoot)
+    if ($context.ValidateCredentials($admin, $password, 'Negotiate')) {
+        Write-Step "$admin signs in with the Key Vault password."
+    }
+    else {
+        Set-ADAccountPassword -Identity $adminUser -Reset -NewPassword (ConvertTo-SecureString -String $password -AsPlainText -Force)
+        Unlock-ADAccount -Identity $adminUser
+        if (-not $context.ValidateCredentials($admin, $password, 'Negotiate')) {
+            throw "$admin still does not sign in with the Key Vault password after a reset."
+        }
+        Write-Step "$admin did not sign in with the Key Vault password: reset it to that password."
+    }
+    $context.Dispose()
+    $password = $null
+}
+
 Write-Step 'Instructions on the desktop'
-$admin = (Get-ADUser -Filter "objectSid -eq '$($domain.DomainSID.Value)-500'").SamAccountName
 $steps = @"
 CONNECT THIS DOMAIN TO MICROSOFT ENTRA ID (about 10 minutes, once)
 

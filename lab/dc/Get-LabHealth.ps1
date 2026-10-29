@@ -76,3 +76,43 @@ if ($audit) {
 Write-Section 'Microsoft Entra Cloud Sync agent'
 $agent = Get-Service -Name AADConnectProvisioningAgent -ErrorAction SilentlyContinue
 if ($agent) { 'Provisioning agent: {0}' -f $agent.Status } else { 'Not installed yet.' }
+
+# Bastion only says "Log in failed"; the Security log says why. This report can be public, so the
+# names people typed are never printed, only whether they were the administrator's.
+Write-Section 'Administrator sign-in'
+$admin = $null
+if ($domain) {
+    $admin = Get-ADUser -Filter "objectSid -eq '$($domain.DomainSID.Value)-500'" -Properties LockedOut, badPwdCount, PasswordLastSet
+    '{0}: enabled {1}, locked out {2}, wrong passwords since the last right one {3}, password set {4:yyyy-MM-dd HH:mm}' -f `
+        $admin.SamAccountName, $admin.Enabled, $admin.LockedOut, $admin.badPwdCount, $admin.PasswordLastSet
+    $xpath = "*[System[EventID=4624 and TimeCreated[timediff(@SystemTime) <= 10800000]] and " +
+        "EventData[Data[@Name='TargetUserName']='$($admin.SamAccountName)' and Data[@Name='LogonType']='10']]"
+    $signIns = @(Get-WinEvent -LogName Security -FilterXPath $xpath -MaxEvents 5 -ErrorAction SilentlyContinue)
+    if ($signIns.Count) { 'Last remote desktop sign-in: {0:yyyy-MM-dd HH:mm:ss}' -f $signIns[0].TimeCreated }
+    else { 'Remote desktop sign-ins in the last 3 hours: none' }
+}
+$reasons = @{
+    '0xc0000064' = 'no account has that name'
+    '0xc000006a' = 'wrong password'
+    '0xc000006f' = 'outside the hours it may sign in'
+    '0xc0000070' = 'not allowed from that computer'
+    '0xc0000071' = 'password expired'
+    '0xc0000072' = 'account disabled'
+    '0xc0000193' = 'account expired'
+    '0xc0000224' = 'password must be changed first'
+    '0xc0000234' = 'account locked out'
+    '0xc000015b' = 'not allowed to sign in that way'
+}
+$refused = @(Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4625; StartTime = (Get-Date).AddHours(-3) } -MaxEvents 15 -ErrorAction SilentlyContinue)
+if (-not $refused.Count) { 'Refused sign-ins in the last 3 hours: none' }
+foreach ($refusal in $refused) {
+    $data = @{}
+    foreach ($field in ([xml]$refusal.ToXml()).Event.EventData.Data) { $data[$field.Name] = [string]$field.'#text' }
+    $code = if ($data.SubStatus -and $data.SubStatus -ne '0x0') { $data.SubStatus.ToLower() } else { $data.Status.ToLower() }
+    $reason = if ($reasons.ContainsKey($code)) { $reasons[$code] } else { "status $code" }
+    $name = if ($admin -and $data.TargetUserName -eq $admin.SamAccountName) { 'the administrator' } else { 'another name' }
+    $prefix = if (-not $data.TargetDomainName -or $data.TargetDomainName -eq '-') { 'no domain' }
+    elseif ($domain -and $data.TargetDomainName -in $domain.NetBIOSName, $domain.DNSRoot) { $data.TargetDomainName }
+    else { 'another domain' }
+    '{0:yyyy-MM-dd HH:mm:ss} refused (logon type {1}): {2}, {3}: {4}' -f $refusal.TimeCreated, $data.LogonType, $name, $prefix, $reason
+}

@@ -32,6 +32,15 @@ business_rules:
     file: approval_decided.js
     description: Starts fulfilment when every approval is given, or closes the item when one is rejected.
 
+  - name: Kestrel - no execution plan tasks
+    table: sc_task
+    when: before
+    insert: true
+    order: 100
+    filter: delivery_taskISNOTEMPTY
+    file: no_plan_tasks.js
+    description: Stops the default execution plan adding its tasks to the automated items, which have their own.
+
   - name: Kestrel - close item with its task
     table: sc_task
     when: after

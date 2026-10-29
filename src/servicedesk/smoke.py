@@ -112,6 +112,37 @@ class SmokeTest:
         )
         return str(notes[0].get("value", "")) if notes else ""
 
+    def tidy(self) -> None:
+        """Closes what an earlier run left open when it failed part way, so that it does not breach
+        its SLAs or sit in a team's queue."""
+        note = "Closed by the next smoke test run: an earlier run stopped before finishing it."
+        incidents = self.sn.query("incident", "correlation_idSTARTSWITHSMOKE-^active=true", fields=["sys_id"])
+        for incident in incidents:
+            self.sn.update(
+                "incident",
+                incident["sys_id"],
+                {"state": 6, "close_code": resolution_code(self.sn), "close_notes": note},
+            )
+        items = self.sn.query(
+            "sc_req_item", "correlation_idSTARTSWITHSMOKE-^active=true", fields=["sys_id", "request"]
+        )
+        for item in items:
+            # Closing the item closes its open tasks too.
+            self.sn.update(
+                "sc_req_item", item["sys_id"], {"state": 4, "stage": "Request Cancelled", "work_notes": note}
+            )
+            request = self.sn.get("sc_request", str(item.get("request")), fields=["active"]) or {}
+            if request.get("active") == "true":
+                self.sn.update(
+                    "sc_request", str(item["request"]), {"state": 4, "request_state": "closed_incomplete"}
+                )
+        if incidents or items:
+            self.check(
+                "Left open by an earlier run, now closed",
+                True,
+                f"incidents: {len(incidents)}, requested items: {len(items)}",
+            )
+
     # -- 1 ---------------------------------------------------------------------------------------
 
     def configuration(self) -> bool:
@@ -342,6 +373,7 @@ def run_smoke_test(
         ("approved request", lambda: test.approved_request(wait_for_agent)),
         ("rejected request", test.rejected_request),
     ]
+    test.tidy()
     if test.configuration():
         for name, step in steps:
             try:

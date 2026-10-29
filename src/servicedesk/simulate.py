@@ -1236,6 +1236,17 @@ class Writer:
                         "correlation_id": t.correlation_id.replace("RITM", "TASK"),
                     },
                 )
+
+        # An item without a workflow also gets the default execution plan's tasks, which history has no use
+        # for. A business rule now stops them; this removes those added before it was installed.
+        items = [self.ids[r.ticket.correlation_id] for r in records if r.ticket.correlation_id in self.ids]
+        planned = self.sn.query(
+            "sc_task", "delivery_taskISNOTEMPTY^" + in_query("request_item", items), fields=["sys_id"]
+        )
+        if planned:
+            self.progress(f"   removing {len(planned)} tasks the default execution plan added")
+        for task in planned:
+            self.sn.delete("sc_task", task["sys_id"])
         return count
 
 

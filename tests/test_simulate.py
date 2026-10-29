@@ -177,7 +177,11 @@ def test_history_loads_into_servicenow_once(config: Any, history: History) -> No
     # right, and so is an incident resolved with another code.
     changes["SIM-CHG-0002"]["state"] = "-5"
     record["close_code"] = "No resolution provided"
+    planned = fake.add("sc_task", request_item=item["sys_id"], delivery_task="PLAN-TASK", state="1")
     write_history(cast(ServiceNow, fake), config, history, progress=lambda _: None)
     assert changes["SIM-CHG-0002"]["state"] == "3"
     assert record["close_code"] == "Solution provided"
     assert fake.tables["sysauto_script"] == []
+    # So is a task the default execution plan added to a simulated request; the history's own task stays.
+    assert fake.get("sc_task", planned["sys_id"]) is None
+    assert fake.get("sc_task", task["sys_id"]) is not None

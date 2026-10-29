@@ -21,8 +21,13 @@ settings:
       - >-
         This system is for authorised council use only. Activity is monitored and logged. Report
         suspected misuse to the IT service desk.
-  - id: device_vendor_msft_policy_config_experience_allowwindowsconsumerfeatures
-    choice: 0
+  # The catalogue only has consumer features under "Allow Windows Spotlight" (a user setting), so
+  # Spotlight goes in at its default, allowed, with consumer features off beneath it.
+  - id: user_vendor_msft_policy_config_experience_allowwindowsspotlight
+    choice: 1
+    children:
+      - id: device_vendor_msft_policy_config_experience_allowwindowsconsumerfeatures
+        choice: 0
   - id: device_vendor_msft_policy_config_storage_removablediskdenywriteaccess
     choice: 1
   - id: device_vendor_msft_policy_config_smartscreen_enablesmartscreeninshell

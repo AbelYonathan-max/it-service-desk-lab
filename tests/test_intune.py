@@ -135,6 +135,8 @@ RECOVERY = "device_vendor_msft_bitlocker_systemdrivesrecoveryoptions"
 INACTIVITY = (
     "device_vendor_msft_policy_config_localpoliciessecurityoptions_interactivelogon_machineinactivitylimit"
 )
+CONSUMER = "device_vendor_msft_policy_config_experience_allowwindowsconsumerfeatures"
+SPOTLIGHT = "user_vendor_msft_policy_config_experience_allowwindowsspotlight"
 NOTICE = (
     "device_vendor_msft_policy_config_localpoliciessecurityoptions_"
     "interactivelogon_messagetextforusersattemptingtologon"
@@ -159,6 +161,8 @@ settings:
     integer: 900
   - id: {NOTICE}
     string: Authorised use only.
+  - id: {CONSUMER}
+    choice: 0
 """,
         encoding="utf-8",
     )
@@ -185,6 +189,10 @@ settings:
                 "@odata.type": COLLECTION_DEFINITION,
                 "valueDefinition": {"@odata.type": VALUE_DEFINITION.format("String")},
             },
+            CONSUMER: {
+                "@odata.type": CHOICE_DEFINITION,
+                "options": [{"itemId": f"{CONSUMER}_0", "dependentOn": [{"dependentOn": f"{SPOTLIGHT}_1"}]}],
+            },
         }
     )
     with pytest.raises(IntuneError) as error:
@@ -198,6 +206,7 @@ settings:
     assert f"_ostypo is not in this tenant's settings catalog. {siblings}" in text
     assert f"{INACTIVITY} does not take a whole number. {INACTIVITY}_v2 does." in text
     assert f"{NOTICE} takes a list of text (strings)." in text
+    assert f"{CONSUMER} only goes under {SPOTLIGHT}_1." in text
 
 
 def test_apply_creates_everything_once(policies: list[Policy]) -> None:

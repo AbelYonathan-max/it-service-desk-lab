@@ -220,7 +220,10 @@ def check_settings(graph: Graph, policies: list[Policy]) -> list[str]:
                 return candidate
         return None
 
-    def check(entry: dict[str, Any], where: str, siblings: list[str] | None = None) -> None:
+    def check(
+        entry: dict[str, Any], where: str, siblings: list[str] | None = None, parent: str | None = None
+    ) -> None:
+        """``parent`` is the option the entry sits under, and ``siblings`` the settings that option has."""
         setting_id = entry["id"]
         found = definition(setting_id)
         if not found:
@@ -259,15 +262,18 @@ def check_settings(graph: Graph, policies: list[Policy]) -> list[str]:
         elif "String" not in value_type(found):
             problems.append(f"{where}: {setting_id} does not take text.")
         elif ("strings" in entry) != ("Collection" in odata):
-            needs = "a list of text (strings)" if "Collection" in odata else "a single text (string)"
-            problems.append(f"{where}: {setting_id} takes {needs}.")
-        # A child has to be one of the settings that the chosen option brings with it.
-        children: list[str] = []
-        for option in options if "choice" in entry else []:
-            if option.get("itemId") == choice_value(entry):
-                children = [str(d.get("dependedOnBy")) for d in option.get("dependedOnBy") or []]
+            wanted = "a list of text (strings)" if "Collection" in odata else "a single text (string)"
+            problems.append(f"{where}: {setting_id} takes {wanted}.")
+        # Some settings only exist under another setting's option, which Graph checks on every write.
+        chosen: dict[str, Any] = {}
+        if "choice" in entry:
+            chosen = next((o for o in options if o.get("itemId") == choice_value(entry)), {})
+        parents = [str(d.get("dependentOn")) for d in (chosen or found).get("dependentOn") or []]
+        if parents and parent not in parents:
+            problems.append(f"{where}: {setting_id} only goes under {' or '.join(parents)}.")
+        children = [str(d.get("dependedOnBy")) for d in chosen.get("dependedOnBy") or []]
         for child in entry.get("children", []):
-            check(child, where, children)
+            check(child, where, children, choice_value(entry))
 
     for policy in policies:
         for entry in policy.settings:

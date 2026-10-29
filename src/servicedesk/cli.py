@@ -63,8 +63,10 @@ def cmd_apply(args: argparse.Namespace) -> int:
         print(change)
     counts = result.counts
     verb = "Would create" if dry_run else "Created"
-    line = f"{verb} {counts['create']}, {'would update' if dry_run else 'updated'} {counts['update']}, " + (
-        f"{counts['same']} already right ({requests} API calls)."
+    line = (
+        f"{verb} {counts['create']}, {'would update' if dry_run else 'updated'} {counts['update']}, "
+        + (f"{'would delete' if dry_run else 'deleted'} {counts['delete']}, " if counts["delete"] else "")
+        + f"{counts['same']} already right ({requests} API calls)."
     )
     print(line)
     _summary(

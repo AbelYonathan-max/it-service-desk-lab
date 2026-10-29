@@ -46,7 +46,7 @@ incident:
   # Priority 5 (Planning) has no SLA: the date is agreed with the caller.
 
 request:
-  name: Request fulfilment (3 working days)
+  name: Fulfilment (3 working days)
   clock: working
   fulfilment_hours: 30
   # The clock stops while the request waits for its approver: the desk cannot speed that up.

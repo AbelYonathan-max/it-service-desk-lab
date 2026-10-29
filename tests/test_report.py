@@ -217,7 +217,7 @@ def live_instance() -> FakeServiceNow:
         task=first,
         has_breached="false",
         business_pause_duration="1970-01-01 00:30:00",
-        **{"sla.target": "resolution", "sla.name": "Kestrel P3 Moderate resolution (30 working hours)"},
+        **{"sla.target": "resolution", "sla.name": "Kestrel P3 resolution (30 working hours)"},
     )
     item = fake.add(
         "sc_req_item",

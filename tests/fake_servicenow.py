@@ -136,7 +136,9 @@ class FakeServiceNow:
         raise KeyError(f"{table}/{sys_id}")
 
     def delete(self, table: str, sys_id: str) -> None:
+        self.requests_made += 1
         self.tables[table] = [r for r in self.tables.get(table, []) if r["sys_id"] != sys_id]
+        self.writes.append(("delete", table, {"sys_id": sys_id}))
 
     def order(
         self, item_sys_id: str, variables: Mapping[str, Any], *, requested_for: str | None = None

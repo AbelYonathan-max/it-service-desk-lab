@@ -1,3 +1,4 @@
+import copy
 from typing import Any, cast
 
 import pytest
@@ -122,17 +123,54 @@ def test_demo_slas_are_switched_off(config: Any) -> None:
     assert len(ours) == 9
 
 
+def test_slas_no_longer_configured_are_deleted_unless_tickets_used_them(config: Any) -> None:
+    fake = base_instance()
+    # ServiceNow cut this one's name off at 40 characters, so apply never found it again.
+    unused = fake.add("contract_sla", name="Kestrel P3 Moderate resolution (30 worki", collection="incident")
+    used = fake.add(
+        "contract_sla", name="Kestrel P2 High response (30 minutes)", collection="incident", active=True
+    )
+    fake.add("task_sla", sla=used["sys_id"], task="INC0010001")
+    result = run(fake, config)
+    assert [(c.action, c.label) for c in result.changes if c.label.startswith("old SLA")] == [
+        ("delete", "old SLA Kestrel P3 Moderate resolution (30 worki"),
+        ("update", "old SLA Kestrel P2 High response (30 minutes)"),
+    ]
+    assert fake.get("contract_sla", unused["sys_id"]) is None
+    assert fake.get("contract_sla", used["sys_id"], fields=["active"]) == {"active": "false"}
+    again = run(fake, config)
+    assert again.counts["create"] == again.counts["update"] == again.counts["delete"] == 0
+
+
+def test_an_sla_name_servicenow_would_cut_off_is_refused(config: Any) -> None:
+    longer = copy.deepcopy(config)
+    longer.sla["request"]["name"] = "Request fulfilment (3 working days)"
+    with pytest.raises(ValueError, match="40 characters"):
+        run(base_instance(), longer, dry_run=True)
+
+
 def test_sla_definitions_follow_the_targets(config: Any) -> None:
     definitions = {d["name"]: d for d in sla_definitions(config, "SCHEDULE", "FLOW")}
-    p1 = definitions["Kestrel P1 Critical resolution (4 hours)"]
+    assert set(definitions) == {
+        "Kestrel P1 response (15 minutes)",
+        "Kestrel P1 resolution (4 hours)",
+        "Kestrel P2 response (30 minutes)",
+        "Kestrel P2 resolution (8 working hours)",
+        "Kestrel P3 response (2 working hours)",
+        "Kestrel P3 resolution (30 working hours)",
+        "Kestrel P4 response (4 working hours)",
+        "Kestrel P4 resolution (50 working hours)",
+        "Kestrel Fulfilment (3 working days)",
+    }
+    p1 = definitions["Kestrel P1 resolution (4 hours)"]
     assert p1["duration"] == "1970-01-01 04:00:00"
     assert p1["schedule"] == ""
     assert p1["schedule_source"] == "no_schedule"
-    p3 = definitions["Kestrel P3 Moderate resolution (30 working hours)"]
+    p3 = definitions["Kestrel P3 resolution (30 working hours)"]
     assert p3["schedule"] == "SCHEDULE"
     assert p3["pause_condition"] == "state=3"
     assert "correlation_idNOT LIKESIM-" in p3["start_condition"]
-    request = definitions["Kestrel Request fulfilment (3 working days)"]
+    request = definitions["Kestrel Fulfilment (3 working days)"]
     assert request["collection"] == "sc_req_item"
     assert request["pause_condition"] == "approval=requested"
 

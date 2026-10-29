@@ -27,17 +27,19 @@ SIMULATED = "correlation_idNOT LIKESIM-^ORcorrelation_idISEMPTY"
 VARIABLE_TYPES = {"yes_no": 1, "multi_line": 2, "select": 5, "single_line": 6, "reference": 8, "date": 9}
 STAFF_QUALIFIER = "active=true^employee_numberSTARTSWITHE"
 DEFAULT_SLA_FLOW = "Default SLA flow"
+SLA_PREFIX = "Kestrel "
+SLA_NAME_LENGTH = 40  # what contract_sla.name holds: ServiceNow cuts a longer name off without a word
 
 
 @dataclass
 class Change:
-    action: str  # create, update or same
+    action: str  # create, update, delete or same
     table: str
     label: str
     fields: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
-        sign = {"create": "+", "update": "~", "same": "="}[self.action]
+        sign = {"create": "+", "update": "~", "delete": "-", "same": "="}[self.action]
         detail = f" ({', '.join(self.fields)})" if self.action == "update" else ""
         return f"{sign} {self.table:<24} {self.label}{detail}"
 
@@ -145,6 +147,12 @@ class Applier:
             current.update(diff)
         return str(current["sys_id"])
 
+    def remove(self, table: str, sys_id: str, *, label: str) -> None:
+        self.changes.append(Change("delete", table, label))
+        if not self.dry_run:
+            with self.explained(label):
+                self.sn.delete(table, sys_id)
+
     @contextmanager
     def explained(self, label: str) -> Iterator[None]:
         """Names the record when ServiceNow refuses a change, as its own message often does not."""
@@ -166,7 +174,7 @@ class Applier:
         return str(record["sys_id"]) if record else ""
 
     def summary(self) -> dict[str, int]:
-        counts = {"create": 0, "update": 0, "same": 0}
+        counts = {"create": 0, "update": 0, "delete": 0, "same": 0}
         for change in self.changes:
             counts[change.action] += 1
         return counts
@@ -581,16 +589,15 @@ def sla_definitions(config: Config, schedule_id: str, flow_id: str) -> list[dict
     }
     for target in config.sla["incident"]:
         priority = target["priority"]
-        label = f"P{priority} {target['label']}"
         start = f"priority={priority}^{SIMULATED}"
         response = target["response_minutes"]
-        response_text = f"{response} minutes" if response < 60 else f"{response // 60} hours"
         working = "" if target["clock"] == "24x7" else " working"
+        response_text = f"{response} minutes" if response < 60 else f"{response // 60}{working} hours"
         definitions.append(
             {
                 **common,
                 **clock(target["clock"]),
-                "name": f"Kestrel {label} response ({response_text}{working if response >= 60 else ''})",
+                "name": f"{SLA_PREFIX}P{priority} response ({response_text})",
                 "collection": "incident",
                 "target": "response",
                 "duration": duration(minutes=response),
@@ -605,7 +612,7 @@ def sla_definitions(config: Config, schedule_id: str, flow_id: str) -> list[dict
             {
                 **common,
                 **clock(target["clock"]),
-                "name": f"Kestrel {label} resolution ({target['resolution_hours']}{working} hours)",
+                "name": f"{SLA_PREFIX}P{priority} resolution ({target['resolution_hours']}{working} hours)",
                 "collection": "incident",
                 "target": "resolution",
                 "duration": duration(hours=target["resolution_hours"]),
@@ -623,7 +630,7 @@ def sla_definitions(config: Config, schedule_id: str, flow_id: str) -> list[dict
         {
             **common,
             **clock(request["clock"]),
-            "name": f"Kestrel {request['name']}",
+            "name": f"{SLA_PREFIX}{request['name']}",
             "collection": "sc_req_item",
             "target": "resolution",
             "duration": duration(hours=request["fulfilment_hours"]),
@@ -639,22 +646,41 @@ def sla_definitions(config: Config, schedule_id: str, flow_id: str) -> list[dict
 
 def apply_slas(a: Applier, config: Config, schedule_id: str) -> list[str]:
     flow_id = a.optional_lookup("sys_hub_flow", f"name={quote(DEFAULT_SLA_FLOW)}")
-    names = []
-    for definition in sla_definitions(config, schedule_id, flow_id):
+    definitions = sla_definitions(config, schedule_id, flow_id)
+    names = [definition["name"] for definition in definitions]
+    too_long = [name for name in names if len(name) > SLA_NAME_LENGTH]
+    if too_long:
+        raise ValueError(f"ServiceNow keeps {SLA_NAME_LENGTH} characters of an SLA name: shorten {too_long}.")
+    for definition in definitions:
         fields = {k: v for k, v in definition.items() if k != "name"}
         a.ensure("contract_sla", {"name": definition["name"]}, fields, label=definition["name"])
-        names.append(definition["name"])
+    not_ours = in_query("name", names).replace("IN", "NOT IN", 1)
+    # Our SLAs that sla.yaml no longer describes: deleted if no ticket ever used them, otherwise
+    # switched off, since closed tickets still point at them.
+    for old in a.sn.query(
+        "contract_sla", f"nameSTARTSWITH{SLA_PREFIX}^{not_ours}", fields=["sys_id", "name"]
+    ):
+        if a.sn.first("task_sla", f"sla={old['sys_id']}", fields=["sys_id"]) is None:
+            a.remove("contract_sla", old["sys_id"], label=f"old SLA {old['name']}")
+        else:
+            a.ensure(
+                "contract_sla", {"sys_id": old["sys_id"]}, {"active": False}, label=f"old SLA {old['name']}"
+            )
     if config.sla.get("deactivate_others", True):
         # The instance's demo SLAs would attach to every ticket and confuse the report.
         others = a.sn.query(
             "contract_sla",
-            f"collectionINincident,sc_req_item^active=true^{in_query('name', names).replace('IN', 'NOT IN', 1)}",
+            f"collectionINincident,sc_req_item^active=true^{not_ours}",
             fields=["sys_id", "name"],
         )
         for other in others:
-            a.ensure(
-                "contract_sla", {"name": other["name"]}, {"active": False}, label=f"demo SLA {other['name']}"
-            )
+            if not other["name"].startswith(SLA_PREFIX):
+                a.ensure(
+                    "contract_sla",
+                    {"sys_id": other["sys_id"]},
+                    {"active": False},
+                    label=f"demo SLA {other['name']}",
+                )
     return names
 
 
@@ -706,7 +732,7 @@ class Result:
 
     @property
     def counts(self) -> dict[str, int]:
-        counts = {"create": 0, "update": 0, "same": 0}
+        counts = {"create": 0, "update": 0, "delete": 0, "same": 0}
         for change in self.changes:
             counts[change.action] += 1
         return counts

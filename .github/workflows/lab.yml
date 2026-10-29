@@ -156,17 +156,7 @@ jobs:
       # Azure only adds or changes a VM extension (the PC's Entra join) while the VM is running.
       - name: Start existing VMs
         if: inputs.action == 'deploy'
-        run: |
-          VMS=$(az vm list -g "$LAB_RG" --query "[].name" -o tsv)
-          for vm in $VMS; do
-            state=$(az vm get-instance-view -g "$LAB_RG" -n "$vm" --query "instanceView.statuses[?starts_with(code, 'PowerState/')].displayStatus | [0]" -o tsv)
-            echo "$vm: $state"
-            if [ "$state" != "VM running" ]; then az vm start -g "$LAB_RG" -n "$vm" --no-wait; fi
-          done
-          for vm in $VMS; do
-            az vm wait -g "$LAB_RG" -n "$vm" --custom "instanceView.statuses[?code=='PowerState/running']" --timeout 900
-            echo "$vm is running"
-          done
+        run: infra/scripts/start-vms.sh "$LAB_RG"
 
       - name: Terraform apply
         if: inputs.action == 'deploy'
@@ -208,16 +198,8 @@ jobs:
 
       - name: Start the VMs
         if: inputs.action == 'deploy' || inputs.action == 'build' || inputs.action == 'start' || inputs.action == 'doctor'
-        run: |
-          for vm in $DC_VM $WS_VM; do
-            state=$(az vm get-instance-view -g "$LAB_RG" -n "$vm" --query "instanceView.statuses[?starts_with(code, 'PowerState/')].displayStatus | [0]" -o tsv)
-            echo "$vm: $state"
-            if [ "$state" != "VM running" ]; then az vm start -g "$LAB_RG" -n "$vm" --no-wait; fi
-          done
-          for vm in $DC_VM $WS_VM; do
-            az vm wait -g "$LAB_RG" -n "$vm" --custom "instanceView.statuses[?code=='PowerState/running']" --timeout 900
-            echo "$vm is running"
-          done
+        # WS_VM is empty when the lab has no PC.
+        run: infra/scripts/start-vms.sh "$LAB_RG" "$DC_VM" ${WS_VM:+"$WS_VM"}
 
       - name: Build the domain controller
         if: inputs.action == 'deploy' || inputs.action == 'build'

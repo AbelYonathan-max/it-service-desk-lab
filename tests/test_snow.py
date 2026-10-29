@@ -33,6 +33,8 @@ def test_connection_from_environment_needs_instance_and_password() -> None:
         Connection.from_environment({})
     connection = Connection.from_environment({"SERVICENOW_INSTANCE": "dev9", "SERVICENOW_PASSWORD": "pw"})
     assert connection.username == "admin"
+    pasted = Connection.from_environment({"SERVICENOW_INSTANCE": "dev9", "SERVICENOW_PASSWORD": " pw\r\n"})
+    assert pasted.password == "pw"
 
 
 def test_in_query_falls_back_to_or_for_values_with_commas() -> None:

@@ -74,7 +74,8 @@ class Connection:
         """SERVICENOW_INSTANCE (dev123456), SERVICENOW_USERNAME (default admin), SERVICENOW_PASSWORD."""
         env = os.environ if environ is None else environ
         instance = env.get("SERVICENOW_INSTANCE", "").strip()
-        password = env.get("SERVICENOW_PASSWORD", "")
+        # Generated passwords never start or end with a space; a pasted one can end with a line break.
+        password = env.get("SERVICENOW_PASSWORD", "").strip()
         if not instance or not password:
             raise ServiceNowError(
                 "No ServiceNow connection: set SERVICENOW_INSTANCE and SERVICENOW_PASSWORD "

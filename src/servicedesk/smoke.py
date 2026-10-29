@@ -116,7 +116,10 @@ class SmokeTest:
         """Closes what an earlier run left open when it failed part way, so that it does not breach
         its SLAs or sit in a team's queue."""
         note = "Closed by the next smoke test run: an earlier run stopped before finishing it."
-        incidents = self.sn.query("incident", "correlation_idSTARTSWITHSMOKE-^active=true", fields=["sys_id"])
+        # New, in progress or on hold: a resolved incident is still active until it closes, but finished.
+        incidents = self.sn.query(
+            "incident", "correlation_idSTARTSWITHSMOKE-^stateIN1,2,3", fields=["sys_id"]
+        )
         for incident in incidents:
             self.sn.update(
                 "incident",

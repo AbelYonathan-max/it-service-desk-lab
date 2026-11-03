@@ -23,6 +23,13 @@ def test_sample_report_writes_the_workbook_and_the_job_summary(
     assert summary.read_text(encoding="utf-8").startswith("### SLA report September 2026")
 
 
+def test_a_mistyped_month_is_a_usage_error(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["report", "September", "--sample"])
+    assert exit_info.value.code == 2
+    assert "A month looks like 2026-09, not 'September'." in capsys.readouterr().err
+
+
 def test_servicenow_commands_need_a_connection(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

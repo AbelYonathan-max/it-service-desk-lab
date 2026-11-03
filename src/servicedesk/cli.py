@@ -38,6 +38,17 @@ def _summary(lines: Sequence[str]) -> None:
             handle.write("\n".join(lines) + "\n")
 
 
+def _month(text: str) -> str:
+    """argparse type for YYYY-MM, so a mistyped month is a usage error rather than a traceback."""
+    from servicedesk.measure import month_bounds
+
+    try:
+        month_bounds(text)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+    return text
+
+
 def _connect() -> ServiceNow:
     return ServiceNow(Connection.from_environment())
 
@@ -216,7 +227,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     connect.set_defaults(func=cmd_connect_lab)
 
     report = top.add_parser("report", help="monthly SLA report (Excel)")
-    report.add_argument("month", help="YYYY-MM")
+    report.add_argument("month", type=_month, help="YYYY-MM")
     report.add_argument("--out", help="output file (default out/sla-report-YYYY-MM.xlsx)")
     report.add_argument(
         "--sample", action="store_true", help="use the simulated history instead of ServiceNow"
